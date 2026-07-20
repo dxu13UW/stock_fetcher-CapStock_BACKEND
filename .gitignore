@@ -1,0 +1,40 @@
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where third-party dependencies like ExDoc output generated docs.
+/doc/
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Ignore package tarball (built via "mix hex.build").
+stock_fetcher-*.tar
+
+# Ignore local environment secrets
+.env
+
+# Ignore local SQLite database tracking files
+stock_fetcher_repo
+stock_fetcher_repo-shm
+stock_fetcher_repo-wal
+
+# Ignore local development editor configurations
+.elixir_ls/
+
+# Ignore generated local output text dumps
+stock_prices.txt
+
+# Ignore any SQLite data directory root modifications (if applicable)
+/sqlite_data/

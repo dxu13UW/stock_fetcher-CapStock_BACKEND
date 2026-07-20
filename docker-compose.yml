@@ -1,0 +1,10 @@
+version: "3.8"
+
+services:
+  stock_runner:
+    build: .
+    container_name: stock_runner
+    environment:
+      - FINNHUB_API_TOKEN=${FINNHUB_API_TOKEN}
+    volumes:
+      - ./db:/app/db
