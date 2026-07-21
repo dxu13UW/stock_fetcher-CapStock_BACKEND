@@ -1,6 +1,8 @@
+# See https://elixir.hexdocs.pm/GenServer.html for documentations of funtionalities and callback functions.
 defmodule StockFetcher.Worker do
   use GenServer
 
+  # 5 workers running concurrently
   @stocks ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
   # Poll every 15 seconds (well within Finnhub's limits!)
   @polling_interval 15_000
@@ -9,6 +11,7 @@ defmodule StockFetcher.Worker do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  # Callback function init/1 see doc
   @impl true
   def init(state) do
     IO.puts("[Worker] Starting automatic database stock-poller...")
@@ -16,11 +19,13 @@ defmodule StockFetcher.Worker do
     {:ok, state}
   end
 
+  # Callback function handle_info/2 see doc
   @impl true
   def handle_info(:poll_market, state) do
     IO.puts("[Worker] Running parallel Finnhub fetch and writing to SQLite...")
 
     @stocks
+    # config each worker
     |> Task.async_stream(&fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
     |> Enum.each(fn
       {:ok, {:ok, ticker, price}} ->
@@ -43,7 +48,6 @@ defmodule StockFetcher.Worker do
     Process.send_after(self(), :poll_market, @polling_interval)
   end
 
-  # Fetches price using your working Finnhub configuration
   defp fetch_stock_data(ticker) do
     token = System.fetch_env!("FINNHUB_API_TOKEN")
 
