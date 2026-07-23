@@ -1,5 +1,10 @@
 # See https://elixir.hexdocs.pm/GenServer.html for documentations of funtionalities and callback functions.
 defmodule StockFetcher.Worker do
+  @moduledoc """
+  Acts as a background manager process built on `GenServer` to automate scheduled stock market data polling.
+  It uses `Task.async_stream` to make concurrent HTTP requests to the external Finnhub API, handles rate limits
+  and network failures gracefully, and passes successfully fetched ticker prices to `StockFetcher.save_price/2`
+  """
   use GenServer
 
   # 5 workers running concurrently
@@ -26,7 +31,7 @@ defmodule StockFetcher.Worker do
 
     @stocks
     # config each worker
-    |> Task.async_stream(&fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
+    |> Task.async_stream(&StockFetcher.fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
     |> Enum.each(fn
       {:ok, {:ok, ticker, price}} ->
         StockFetcher.save_price(ticker, price)
@@ -46,28 +51,5 @@ defmodule StockFetcher.Worker do
 
   defp schedule_next_poll do
     Process.send_after(self(), :poll_market, @polling_interval)
-  end
-
-  defp fetch_stock_data(ticker) do
-    token = System.fetch_env!("FINNHUB_API_TOKEN")
-
-    url = "https://finnhub.io/api/v1/quote?symbol=#{ticker}&token=#{token}"
-
-    case Req.get(url) do
-      {:ok, %Req.Response{status: 200, body: %{"c" => price}}} when price > 0 ->
-        {:ok, ticker, price}
-
-      {:ok, %Req.Response{status: 401}} ->
-        {:error, ticker, "Invalid API Key"}
-
-      {:ok, %Req.Response{status: 429}} ->
-        {:error, ticker, "Rate Limit Reached"}
-
-      {:ok, %Req.Response{status: status}} ->
-        {:error, ticker, "HTTP Error #{status}"}
-
-      {:error, exception} ->
-        {:error, ticker, "Network Failure: #{inspect(exception)}"}
-    end
   end
 end

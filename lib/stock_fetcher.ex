@@ -6,6 +6,37 @@ defmodule StockFetcher do
   alias StockFetcher.StockPrice
 
   @doc """
+  Fetches stock market data for a given ticker from Finnhub API.
+  Accepts optional `opts` keyword list (used to pass `Req.Test` plug options during tests).
+  """
+  def fetch_stock_data(ticker, opts \\ []) do
+    token = System.get_env("FINNHUB_API_TOKEN", "test_token")
+    url = "https://finnhub.io/api/v1/quote?symbol=#{ticker}&token=#{token}"
+
+    # Fetch configured options for Req.
+    # (defaults to [] in dev/prod, uses test plug in test env)
+    req_opts = Application.get_env(:stock_fetcher, :req_options, []) |> Keyword.merge(opts)
+
+    case Req.get(url, req_opts) do
+      {:ok, %Req.Response{status: 200, body: %{"c" => price}}}
+      when is_number(price) and price > 0 ->
+        {:ok, ticker, price}
+
+      {:ok, %Req.Response{status: 401}} ->
+        {:error, ticker, "Invalid API Key"}
+
+      {:ok, %Req.Response{status: 429}} ->
+        {:error, ticker, "Rate Limit Reached"}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, ticker, "HTTP Error #{status}"}
+
+      {:error, exception} ->
+        {:error, ticker, "Network Failure: #{inspect(exception)}"}
+    end
+  end
+
+  @doc """
   Call this function with a ticker and price to save it to your SQLite database.
   Example: StockFetcher.save_price("AAPL", 175.50)
   """

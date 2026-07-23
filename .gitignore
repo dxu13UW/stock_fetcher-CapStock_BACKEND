@@ -30,6 +30,15 @@ stock_fetcher_repo
 stock_fetcher_repo-shm
 stock_fetcher_repo-wal
 
+# Ignore SQLite database files and temporary WAL/SHM artifacts
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/db/*.db
+/db/*.db-*
+
 # Ignore local development editor configurations
 .elixir_ls/
 
