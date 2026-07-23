@@ -41,6 +41,8 @@ stock_fetcher_repo-wal
 
 # Ignore local development editor configurations
 .elixir_ls/
+/.elixir_ls/
+/.vscode/
 
 # Ignore generated local output text dumps
 stock_prices.txt

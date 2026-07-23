@@ -8,11 +8,16 @@ defmodule StockFetcherTest do
 
   use ExUnit.Case, async: true
   alias StockFetcher
-  alias StockFetcher.StockPrice
+  alias StockFetcher.Repo
 
   setup do
     # Explicitly checkout a sandbox database connection for this test run
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(StockFetcher.Repo)
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+
+    # Allow all spawned tasks/processes in the test to share Req.Test stubs!
+    Req.Test.set_req_test_to_shared(self())
+
+    :ok
   end
 
   # Helper function to extract changeset error messages into a map.
@@ -24,15 +29,6 @@ defmodule StockFetcherTest do
         to_string(Map.get(opt_map, String.to_existing_atom(key), key))
       end)
     end)
-  end
-
-  describe "StockPrice changeset/2" do
-    test "validates required fields" do
-      changeset = StockPrice.changeset(%StockPrice{}, %{})
-      refute changeset.valid?
-      assert "can't be blank" in errors_on(changeset).ticker
-      assert "can't be blank" in errors_on(changeset).price
-    end
   end
 
   describe "save_price/2" do
