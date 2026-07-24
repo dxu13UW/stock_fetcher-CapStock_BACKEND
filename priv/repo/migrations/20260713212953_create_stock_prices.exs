@@ -6,7 +6,7 @@ defmodule StockFetcher.Repo.Migrations.CreateStockPrices do
       add :ticker, :string
       add :price, :float
 
-      timestamps()
+      timestamps(type: :utc_datetime)
     end
   end
 end

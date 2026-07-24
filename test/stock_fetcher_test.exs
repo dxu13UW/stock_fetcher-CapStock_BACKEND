@@ -7,8 +7,9 @@ defmodule StockFetcherTest do
   """
 
   use ExUnit.Case, async: true
-  alias StockFetcher
+
   alias StockFetcher.Repo
+  alias StockFetcher.StockPrice
 
   setup do
     # Explicitly checkout a sandbox database connection for this test run
@@ -87,6 +88,28 @@ defmodule StockFetcherTest do
       end)
 
       assert {:error, "NVDA", "HTTP Error 500"} = StockFetcher.fetch_stock_data("NVDA")
+    end
+  end
+
+  describe "prune_old_prices/1" do
+    test "deletes records older than the specified number of days" do
+      {:ok, recent_price} = StockFetcher.save_price("APPL", 120.67)
+      {:ok, old_price} = StockFetcher.save_price("AAPL", 140.00)
+
+      thirty_one_days_ago = NaiveDateTime.utc_now() |> NaiveDateTime.add(-31 * 86_400, :second)
+
+      import Ecto.Query
+
+      Repo.update_all(
+        from(p in StockPrice, where: p.id == ^old_price.id),
+        set: [inserted_at: thirty_one_days_ago]
+      )
+
+      {deleted_count, _} = StockFetcher.prune_old_prices(30)
+
+      assert deleted_count == 1
+      assert Repo.get(StockPrice, old_price.id) == nil
+      assert Repo.get(StockPrice, recent_price.id) != nil
     end
   end
 end

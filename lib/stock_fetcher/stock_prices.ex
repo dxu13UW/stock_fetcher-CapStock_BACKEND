@@ -11,7 +11,7 @@ defmodule StockFetcher.StockPrice do
     field(:ticker, :string)
     field(:price, :float)
 
-    timestamps()
+    timestamps(type: :utc_datetime)
   end
 
   def changeset(stock_price, attrs) do
