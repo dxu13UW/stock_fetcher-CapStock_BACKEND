@@ -17,10 +17,10 @@ defmodule StockFetcher.WorkerTest do
         Req.Test.json(conn, %{"c" => 150.00})
       end)
 
-      pid = Process.whereis(Worker)
+      {:ok, pid} = start_supervised({Worker, schedule_timer: false, test_pid: self(), name: nil})
       send(pid, :poll_market)
-      # Give Task.async_stream a tiny window to complete async writes
-      Process.sleep(100)
+
+      assert_receive :poll_complete, 1000
 
       prices = Repo.all(StockPrice)
       assert length(prices) > 0
@@ -35,11 +35,11 @@ defmodule StockFetcher.WorkerTest do
         Plug.Conn.send_resp(conn, 429, "Too Many Requests")
       end)
 
-      pid = Process.whereis(Worker)
+      {:ok, pid} = start_supervised({Worker, schedule_timer: false, test_pid: self(), name: nil})
 
       send(pid, :poll_market)
-      # Give Task.async_stream a tiny window to complete async writes
-      Process.sleep(100)
+
+      assert_receive :poll_complete, 1000
 
       assert Process.alive?(pid)
       assert Repo.aggregate(StockPrice, :count, :id) == 0

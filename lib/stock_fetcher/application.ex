@@ -5,8 +5,9 @@ defmodule StockFetcher.Application do
   def start(_type, _args) do
     children = [
       StockFetcher.Repo,
-      {StockFetcher.Worker, []}
-      # Append workers here.
+      {StockFetcher.Worker, []},
+      StockFetcher.Pruner
+      # Append processes here.
     ]
 
     opts = [strategy: :one_for_one, name: StockFetcher.Supervisor]

@@ -12,16 +12,26 @@ defmodule StockFetcher.Worker do
   # Poll every 15 seconds (well within Finnhub's limits!)
   @polling_interval 15_000
 
+  # --- Client API ---
+
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
   end
+
+  # --- Server Callbacks ---
 
   # Callback function init/1 see doc
   @impl true
-  def init(state) do
-    IO.puts("[Worker] Starting automatic database stock-poller...")
-    schedule_next_poll()
-    {:ok, state}
+  def init(opts) do
+    schedule_timer = Keyword.get(opts, :schedule_timer, true)
+    test_pid = Keyword.get(opts, :test_pid)
+
+    if schedule_timer do
+      schedule_next_poll()
+    end
+
+    {:ok, %{schedule_timer: schedule_timer, test_pid: test_pid}}
   end
 
   # Callback function handle_info/2 see doc
@@ -43,7 +53,15 @@ defmodule StockFetcher.Worker do
         IO.puts("[Error] Process crashed: #{inspect(reason)}")
     end)
 
-    schedule_next_poll()
+    # For ExUnit testing
+    if state.test_pid do
+      send(state.test_pid, :poll_complete)
+    end
+
+    if state.schedule_timer do
+      schedule_next_poll()
+    end
+
     {:noreply, state}
   end
 
