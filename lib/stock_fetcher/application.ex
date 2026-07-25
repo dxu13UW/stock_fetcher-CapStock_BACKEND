@@ -6,7 +6,9 @@ defmodule StockFetcher.Application do
     children = [
       StockFetcher.Repo,
       {StockFetcher.Worker, []},
-      StockFetcher.Pruner
+      StockFetcher.Pruner,
+      {Phoenix.PubSub, name: StockFetcher.PubSub},
+      StockFetcherWeb.Endpoint
       # Append processes here.
     ]
 

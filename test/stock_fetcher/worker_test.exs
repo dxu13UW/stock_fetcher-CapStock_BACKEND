@@ -1,8 +1,6 @@
 defmodule StockFetcher.WorkerTest do
   use ExUnit.Case, async: false
-  alias StockFetcher.Repo
-  alias StockFetcher.StockPrice
-  alias StockFetcher.Worker
+  alias StockFetcher.{Repo, StockPrice, Worker}
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)

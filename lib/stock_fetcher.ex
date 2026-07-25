@@ -5,8 +5,7 @@ defmodule StockFetcher do
   """
   import Ecto.Query
 
-  alias StockFetcher.Repo
-  alias StockFetcher.StockPrice
+  alias StockFetcher.{Repo, StockPrice}
 
   @doc """
   Fetches stock market data for a given ticker from Finnhub API.

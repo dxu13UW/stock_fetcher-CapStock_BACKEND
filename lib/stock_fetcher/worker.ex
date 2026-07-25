@@ -6,6 +6,7 @@ defmodule StockFetcher.Worker do
   and network failures gracefully, and passes successfully fetched ticker prices to `StockFetcher.save_price/2`
   """
   use GenServer
+  require Logger
 
   # 5 workers running concurrently
   @stocks ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
@@ -37,30 +38,16 @@ defmodule StockFetcher.Worker do
   # Callback function handle_info/2 see doc
   @impl true
   def handle_info(:poll_market, state) do
-    IO.puts("[Worker] Running parallel Finnhub fetch and writing to SQLite...")
+    Logger.info("[Worker] Running parallel Finnhub fetch and writing to SQLite...")
 
     @stocks
-    # config each worker
     |> Task.async_stream(&StockFetcher.fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
-    |> Enum.each(fn
-      {:ok, {:ok, ticker, price}} ->
-        StockFetcher.save_price(ticker, price)
-
-      {:ok, {:error, ticker, reason}} ->
-        IO.puts("[Error] Failed to fetch #{ticker}: #{reason}")
-
-      {:error, reason} ->
-        IO.puts("[Error] Process crashed: #{inspect(reason)}")
-    end)
+    |> Enum.each(&handle_fetch_result/1)
 
     # For ExUnit testing
-    if state.test_pid do
-      send(state.test_pid, :poll_complete)
-    end
+    if state.test_pid, do: send(state.test_pid, :poll_complete)
 
-    if state.schedule_timer do
-      schedule_next_poll()
-    end
+    if state.schedule_timer, do: schedule_next_poll()
 
     {:noreply, state}
   end
@@ -69,5 +56,40 @@ defmodule StockFetcher.Worker do
 
   defp schedule_next_poll do
     Process.send_after(self(), :poll_market, @polling_interval)
+  end
+
+  # Processes the result of an asynchronous fetch task emitted by `Task.async_stream/3`.
+  #
+  # ## Behavior
+  # * `{:ok, {:ok, ticker, price}}`     — Saves the valid stock price to SQLite via
+  # * `{:ok, {:ok, ticker, price}}`     — Saves to SQLite and broadcasts via PubSub.
+  # * `{:ok, {:error, ticker, reason}}` — Logs fetch/rate-limit errors.
+  # * `{:error, reason}`                — Logs task timeout or process crash.
+  defp handle_fetch_result({:ok, {:ok, ticker, price}}) do
+    case StockFetcher.save_price(ticker, price) do
+      {:ok, stock_price} ->
+        Phoenix.PubSub.broadcast(
+          StockFetcher.PubSub,
+          "stocks:live",
+          {"new_price",
+           %{
+             id: stock_price.id,
+             ticker: stock_price.ticker,
+             price: stock_price.price,
+             timestamp: stock_price.inserted_at
+           }}
+        )
+
+      {:error, changeset} ->
+        IO.puts("[Error] Failed to save #{ticker} to SQLite: #{inspect(changeset.errors)}")
+    end
+  end
+
+  defp handle_fetch_result({:ok, {:error, ticker, reason}}) do
+    IO.puts("[Error] Failed to fetch #{ticker}: #{reason}")
+  end
+
+  defp handle_fetch_result({:error, reason}) do
+    IO.puts("[Error] Task process crashed: #{inspect(reason)}")
   end
 end

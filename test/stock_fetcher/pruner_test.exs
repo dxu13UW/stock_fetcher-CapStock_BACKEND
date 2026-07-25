@@ -1,12 +1,11 @@
 defmodule StockFetcher.PrunerTest do
   use ExUnit.Case, async: false
 
-  alias StockFetcher.Repo
-  alias StockFetcher.StockPrice
+  alias StockFetcher.{Repo, StockPrice}
 
   setup do
-    # Explicitly checkout a sandbox database connection for this test run
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    :ok
   end
 
   test "handle_info :prune triggers deletion of old price records" do

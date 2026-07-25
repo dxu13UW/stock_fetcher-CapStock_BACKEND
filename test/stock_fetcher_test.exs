@@ -8,8 +8,7 @@ defmodule StockFetcherTest do
 
   use ExUnit.Case, async: true
 
-  alias StockFetcher.Repo
-  alias StockFetcher.StockPrice
+  alias StockFetcher.{Repo, StockPrice}
 
   setup do
     # Explicitly checkout a sandbox database connection for this test run
