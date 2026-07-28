@@ -4,7 +4,7 @@ defmodule StockFetcher do
   Contains all core business logic for the application.
   """
   import Ecto.Query
-
+  require Logger
   alias StockFetcher.{Repo, StockPrice}
 
   @doc """
@@ -57,8 +57,7 @@ defmodule StockFetcher do
         {:ok, struct}
 
       {:error, changeset} ->
-        IO.inspect(changeset.errors, label: "Failed to save stock price")
-        {:error, changeset}
+        Logger.error("Failed to save stock price: #{inspect(changeset.errors)}")
     end
   end
 

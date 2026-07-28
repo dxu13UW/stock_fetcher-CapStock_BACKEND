@@ -34,7 +34,8 @@ defmodule StockFetcher.MixProject do
       {:phoenix_ecto, "~> 4.4"},
       {:cors_plug, "~> 3.0"},
       {:phoenix_pubsub, "~> 2.1"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:credo, "~>1.7", only: [:dev, :test], runtime: false}
     ]
   end
 end

@@ -47,3 +47,41 @@ Expected output:
 INSERT INTO "stock_prices" ("ticker","price",...) VALUES ("AAPL", 333.74...)
 Successfully saved AAPL to SQLite!
 ```
+
+## Test Phoenix API
+
+`curl -i http://localhost:4000/api/stocks`
+
+
+## Diagram
+
+```mermaid
+flowchart TD
+    Client[React Client / Localhost]
+
+    subgraph Phoenix Web Stack
+        EP[1. Endpoint<br/><code>endpoint.ex</code>]
+        RTR[2. Router<br/><code>router.ex</code>]
+        CTRL[3. StockController<br/><code>stock_controller.ex</code>]
+        US[4. UserSocket<br/><code>user_socket.ex</code>]
+        SC[5. StockChannel<br/><code>stock_channel.ex</code>]
+    end
+
+    subgraph Core Domain & Data
+        PS((Phoenix.PubSub))
+        DB[(SQLite Database)]
+    end
+
+    %% HTTP Flow
+    Client -- "HTTP GET /api/stocks" --> EP
+    EP -- "Plug Pipeline" --> RTR
+    RTR -- "Route Match" --> CTRL
+    CTRL -- "Ecto Query" --> DB
+
+    %% WebSocket Flow
+    Client -- "WebSocket ws://localhost:4000/socket" --> EP
+    EP -- "Socket Upgrade" --> US
+    US -- "Topic Match stocks:*" --> SC
+    SC <--> |Subscribe / Broadcast| PS
+    SC -- "Ecto Query / Hydration" --> DB
+```

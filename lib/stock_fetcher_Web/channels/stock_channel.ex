@@ -2,6 +2,7 @@ defmodule StockFetcherWeb.StockChannel do
   use Phoenix.Channel
   alias StockFetcher.{Repo, StockPrice}
   import Ecto.Query
+  require Logger
 
   # Client joins the topic "stocks:live"
   @impl true
@@ -9,11 +10,8 @@ defmodule StockFetcherWeb.StockChannel do
     # Stream stock price updates
     Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:broadcasts")
 
-    # Send a initial snapshot (hydration) right upon joining
-    initial_snapshot = fetch_recent_prices(50)
-
     # Returning `{:ok, payload, socket}` sends the payload immediately as the join response
-    {:ok, %{initial_data: initial_snapshot}, socket}
+    {:ok, %{initial_data: fetch_recent_prices(50)}, socket}
   end
 
   @impl true
@@ -29,6 +27,12 @@ defmodule StockFetcherWeb.StockChannel do
   def handle_info({:new_price, stock_data}, socket) do
     push(socket, "new_price", stock_data)
     {:noreply, socket}
+  end
+
+  @impl true
+  def terminate(reason, socket) do
+    Logger.info("Client disconnected from '#{socket.topic}'. Reason: #{inspect(reason)}")
+    :ok
   end
 
   # --- Helper Query ---

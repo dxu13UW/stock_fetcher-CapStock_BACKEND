@@ -12,6 +12,8 @@ defmodule StockFetcherWeb.StockController do
     json(conn, %{data: format_prices(prices)})
   end
 
+  # --- Helper Functions ---
+
   defp format_prices(prices) do
     Enum.map(prices, fn p ->
       %{

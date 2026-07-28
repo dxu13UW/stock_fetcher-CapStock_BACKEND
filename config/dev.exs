@@ -1,5 +1,11 @@
 import Config
 
+config :stock_fetcher, :cors_origins, [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:8080"
+]
+
 config :stock_fetcher, StockFetcher.Repo,
   database: Path.expand("../stock_fetcher_dev.db", __DIR__),
   pool_size: 5,
