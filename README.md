@@ -52,6 +52,18 @@ Successfully saved AAPL to SQLite!
 
 `curl -i http://localhost:4000/api/stocks`
 
+## Test Websocket Upgrade
+
+```
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Host: localhost:4000" \
+  -H "Origin: http://localhost:5173" \
+  -H "Sec-WebSocket-Key: SGVsbG8sIFdvcmxkIQ==" \
+  -H "Sec-WebSocket-Version: 13" \
+  http://localhost:4000/socket/websocket
+```
 
 ## Diagram
 
