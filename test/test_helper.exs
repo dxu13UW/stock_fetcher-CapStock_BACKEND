@@ -3,7 +3,7 @@ Ecto.Adapters.SQL.Sandbox.mode(StockFetcher.Repo, :manual)
 
 defmodule StockFetcher.TestHelpers do
   @doc """
-  Transforms changeset error tuples into a clean map of error messages.
+  Helper function to extract changeset error messages into a map.
   """
   def errors_on(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->

@@ -1,6 +1,8 @@
 # Base configuration module for the StockFetcher application across all execution environments.
 import Config
 
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 config :stock_fetcher,
   ecto_repos: [StockFetcher.Repo]
 
@@ -11,7 +13,7 @@ config :stock_fetcher, StockFetcher.Repo,
 
 config :stock_fetcher, StockFetcherWeb.Endpoint,
   url: [host: "localhost"],
-  render_errors: [formats: [json: StockFetcherWeb.ErrorJSON], accept_s: ~w(json)],
+  render_errors: [formats: [json: StockFetcherWeb.ErrorJSON], accepts: ~w(json)],
   pubsub_server: StockFetcher.PubSub
 
 target_file = Path.join(__DIR__, "#{config_env()}.exs")
