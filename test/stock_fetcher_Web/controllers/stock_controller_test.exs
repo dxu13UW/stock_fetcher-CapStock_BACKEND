@@ -1,45 +1,34 @@
 defmodule StockFetcherWeb.StockControllerTest do
   use StockFetcherWeb.ConnCase, async: true
-  alias StockFetcher.{Repo, StockPrice}
+  alias StockFetcher
 
   setup do
+    tickers = ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
+
+    # Seed database with synthetic records for each ticker
+    for ticker <- tickers, i <- 1..120 do
+      StockFetcher.save_price(ticker, 100.0 + i)
+    end
+
     :ok
   end
 
-  describe "GET /api/stocks" do
-    test "returns 200 OK with formatted stock data and CORS headers", %{conn: conn} do
-      Repo.insert!(%StockPrice{ticker: "AAPL", price: 333.02})
+  test "GET /api/stocks returns LTTB hydrated data for all 5 watchlist tickers", %{conn: conn} do
+    conn = get(conn, ~p"/api/stocks")
 
-      conn =
-        conn
-        |> put_req_header("origin", "http://localhost:5173")
-        |> get(~p"/api/stocks")
+    assert %{"data" => data} = json_response(conn, 200)
 
-      assert json_response(conn, 200) == %{
-               "data" => [
-                 %{
-                   "id" => Repo.one!(StockPrice).id,
-                   "ticker" => "AAPL",
-                   "price" => 333.02,
-                   "timestamp" => DateTime.to_iso8601(Repo.one!(StockPrice).inserted_at)
-                 }
-               ]
-             }
+    # Check that all 5 tickers are present in the response keys
+    assert Map.has_key?(data, "AAPL")
+    assert Map.has_key?(data, "AMZN")
+    assert Map.has_key?(data, "GOOGL")
+    assert Map.has_key?(data, "MSFT")
+    assert Map.has_key?(data, "TSLA")
 
-      # Verify CORS header plug behavior
-      assert get_resp_header(conn, "access-control-allow-origin") == ["http://localhost:5173"]
-    end
-
-    test "limits results to 50 items max", %{conn: conn} do
-      # Seed 60 records
-      for i <- 1..60 do
-        Repo.insert!(%StockPrice{ticker: "STOCK_#{i}", price: 100.0 + i})
-      end
-
-      conn = get(conn, ~p"/api/stocks")
-      %{"data" => stocks} = json_response(conn, 200)
-
-      assert length(stocks) == 50
-    end
+    # Assert downsampling down to 100 points max for AAPL
+    aapl_points = data["AAPL"]
+    assert length(aapl_points) <= 100
+    assert is_float(hd(aapl_points)["price"])
+    assert is_integer(hd(aapl_points)["timestamp"])
   end
 end

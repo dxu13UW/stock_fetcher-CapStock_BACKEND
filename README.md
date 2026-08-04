@@ -48,6 +48,10 @@ INSERT INTO "stock_prices" ("ticker","price",...) VALUES ("AAPL", 333.74...)
 Successfully saved AAPL to SQLite!
 ```
 
+## Test Suite Execution
+
+`docker compose exec -e MIX_ENV=test stock_runner mix test --no-start`
+
 ## Test Phoenix API
 
 `curl -i http://localhost:4000/api/stocks`

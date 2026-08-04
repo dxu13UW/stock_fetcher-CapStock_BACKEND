@@ -1,5 +1,5 @@
 defmodule StockFetcherWeb.StockChannelTest do
-  use StockFetcherWeb.ChannelCase
+  use StockFetcherWeb.ChannelCase, async: false
   alias StockFetcher.{Repo, StockPrice}
 
   setup do
@@ -65,7 +65,7 @@ defmodule StockFetcherWeb.StockChannelTest do
       %{socket: socket}
     end
 
-    test "pushes new_price event down the socket when PubSub receives a tick", %{socket: socket} do
+    test "pushes new_price event down the socket when PubSub receives a tick", %{socket: _socket} do
       payload = %{
         id: 1,
         ticker: "NVDA",
@@ -82,7 +82,7 @@ defmodule StockFetcherWeb.StockChannelTest do
       assert_push("new_price", ^payload)
     end
 
-    test "handles multiple rapid PubSub ticks in order", %{socket: socket} do
+    test "handles multiple rapid PubSub ticks in order", %{socket: _socket} do
       ticks = [
         %{id: 1, ticker: "AAPL", price: 180.00},
         %{id: 2, ticker: "AAPL", price: 180.50},

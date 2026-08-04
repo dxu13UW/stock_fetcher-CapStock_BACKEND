@@ -15,3 +15,5 @@ config :stock_fetcher, StockFetcherWeb.Endpoint,
 config :stock_fetcher, :req_options,
   plug: {Req.Test, StockFetcher},
   retry: false
+
+config :stock_fetcher_web, StockFetcherWeb.Endpoint, debug_errors: true

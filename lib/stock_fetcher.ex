@@ -1,11 +1,11 @@
 defmodule StockFetcher do
   @moduledoc """
-  The core context module for managing stock price data, persistence, and database hygiene.
+  The core CONTEXT module for managing stock price data, persistence, and database hygiene.
   Contains all core business logic for the application.
   """
   import Ecto.Query
   require Logger
-  alias StockFetcher.{Repo, StockPrice}
+  alias StockFetcher.{Repo, StockPrice, LTTB}
 
   @doc """
   Fetches stock market data for a given ticker from Finnhub API.
@@ -58,6 +58,7 @@ defmodule StockFetcher do
 
       {:error, changeset} ->
         Logger.error("Failed to save stock price: #{inspect(changeset.errors)}")
+        {:error, changeset}
     end
   end
 
@@ -107,5 +108,38 @@ defmodule StockFetcher do
     else
       {0, nil}
     end
+  end
+
+  @doc """
+  Fetches historical stock records for `ticker` over the past `hours`,
+  downsampling the result set to `target_points` using LTTB.
+  """
+  def get_hydrated_prices(ticker, hours \\ 12, target_points \\ 100) do
+    cutoff =
+      DateTime.utc_now()
+      |> DateTime.add(-hours, :hour)
+
+    Repo.all(
+      from(s in StockPrice,
+        where: s.ticker == ^String.upcase(ticker) and s.inserted_at >= ^cutoff,
+        order_by: [asc: s.inserted_at]
+      )
+    )
+    |> LTTB.downsample(target_points)
+  end
+
+  @doc """
+  Hydrates a default or custom list of stock tickers with downsampled historical prices.
+  Returns a map keyed by ticker name.
+  """
+  def hydrate_watchlist(
+        tickers \\ ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"],
+        hours \\ 12,
+        target_points \\ 100
+      ) do
+    Map.new(tickers, fn ticker ->
+      prices = get_hydrated_prices(ticker, hours, target_points)
+      {ticker, prices}
+    end)
   end
 end

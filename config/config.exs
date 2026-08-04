@@ -21,3 +21,11 @@ target_file = Path.join(__DIR__, "#{config_env()}.exs")
 if File.exists?(target_file) do
   import_config target_file
 end
+
+config :stock_fetcher, StockFetcherWeb.Endpoint,
+  url: [host: "localhost"],
+  render_errors: [
+    renders: [json: StockFetcherWeb.ErrorJSON],
+    accepts: ~w(json)
+  ],
+  pubsub_server: StockFetcher.PubSub
