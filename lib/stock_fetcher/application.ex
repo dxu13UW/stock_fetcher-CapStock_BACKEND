@@ -5,8 +5,11 @@ defmodule StockFetcher.Application do
   def start(_type, _args) do
     children = [
       StockFetcher.Repo,
-      # 💡 Add your background worker here so it starts automatically!
-      {StockFetcher.Worker, []}
+      {StockFetcher.Worker, []},
+      StockFetcher.Pruner,
+      {Phoenix.PubSub, name: StockFetcher.PubSub},
+      StockFetcherWeb.Endpoint
+      # Append processes here.
     ]
 
     opts = [strategy: :one_for_one, name: StockFetcher.Supervisor]

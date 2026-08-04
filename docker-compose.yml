@@ -1,10 +1,17 @@
-version: "3.8"
-
 services:
   stock_runner:
     build: .
     container_name: stock_runner
     environment:
       - FINNHUB_API_TOKEN=${FINNHUB_API_TOKEN}
+      - MIX_ENV=dev
+    ports:
+      - "4000:4000"
     volumes:
-      - ./db:/app/db
+      - .:/app
+      - elixir_deps:/app/deps
+      - elixir_build:/app/_build
+
+volumes:
+  elixir_deps:
+  elixir_build:

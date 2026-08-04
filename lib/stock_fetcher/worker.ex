@@ -1,69 +1,118 @@
+# See https://elixir.hexdocs.pm/GenServer.html for documentations of funtionalities and callback functions.
 defmodule StockFetcher.Worker do
+  @moduledoc """
+  Acts as a background manager process built on `GenServer` to automate scheduled stock market data polling.
+  It uses `Task.async_stream` to make concurrent HTTP requests to the external Finnhub API, handles rate limits
+  and network failures gracefully, and passes successfully fetched ticker prices to `StockFetcher.save_price/2`
+  It checks standard US market hours before fetching; if open, it polls on a standard interval, and if closed,
+  it hibernates until the next market opening bell.
+  """
   use GenServer
+  require Logger
+  alias StockFetcher.MarketHours
 
+  # 5 workers running concurrently
   @stocks ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
   # Poll every 15 seconds (well within Finnhub's limits!)
   @polling_interval 15_000
 
+  # --- Client API ---
+
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  # --- Server Callbacks ---
+
+  # Callback function init/1 see doc
   @impl true
-  def init(state) do
-    IO.puts("[Worker] Starting automatic database stock-poller...")
-    schedule_next_poll()
-    {:ok, state}
+  def init(opts) do
+    schedule_timer = Keyword.get(opts, :schedule_timer, true)
+    test_pid = Keyword.get(opts, :test_pid)
+    # Default to real clock, but allows injecting fixed DateTime in tests
+    now_fn = Keyword.get(opts, :now_fn, &DateTime.utc_now/0)
+
+    if schedule_timer do
+      schedule_next_poll()
+    end
+
+    {:ok, %{schedule_timer: schedule_timer, test_pid: test_pid, now_fn: now_fn}}
   end
 
+  # Callback function handle_info/2 see doc
   @impl true
   def handle_info(:poll_market, state) do
-    IO.puts("[Worker] Running parallel Finnhub fetch and writing to SQLite...")
+    current_time = state.now_fn.()
 
-    @stocks
-    |> Task.async_stream(&fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
-    |> Enum.each(fn
-      {:ok, {:ok, ticker, price}} ->
-        StockFetcher.save_price(ticker, price)
+    next_interval =
+      if MarketHours.market_open?(current_time) do
+        Logger.info("[Worker] Market is OPEN. Running parallel Finnhub fetch...")
 
-      {:ok, {:error, ticker, reason}} ->
-        IO.puts("[Error] Failed to fetch #{ticker}: #{reason}")
+        @stocks
+        |> Task.async_stream(&StockFetcher.fetch_stock_data/1, max_concurrency: 5, timeout: 5000)
+        |> Enum.each(&handle_fetch_result/1)
 
-      {:error, reason} ->
-        IO.puts("[Error] Process crashed: #{inspect(reason)}")
-    end)
+        @polling_interval
+      else
+        ms_until_open = MarketHours.ms_until_next_open(current_time)
+        hours_until_open = Float.round(ms_until_open / 3_600_000, 2)
 
-    schedule_next_poll()
+        Logger.info(
+          "[Worker] Market is CLOSED. Hibernating until next opening bell in #{hours_until_open} hours."
+        )
+
+        ms_until_open
+      end
+
+    # For ExUnit testing notification
+    if state.test_pid, do: send(state.test_pid, {:poll_complete, next_interval})
+
+    if state.schedule_timer do
+      schedule_next_poll(next_interval)
+    end
+
     {:noreply, state}
   end
 
   # --- Helper Functions ---
 
-  defp schedule_next_poll do
-    Process.send_after(self(), :poll_market, @polling_interval)
+  defp schedule_next_poll(interval \\ @polling_interval) do
+    Process.send_after(self(), :poll_market, interval)
   end
 
-  # Fetches price using your working Finnhub configuration
-  defp fetch_stock_data(ticker) do
-    token = System.fetch_env!("FINNHUB_API_TOKEN")
+  # Processes the result of an asynchronous fetch task emitted by `Task.async_stream/3`.
+  #
+  # ## Behavior
+  # * `{:ok, {:ok, ticker, price}}`     — Saves the valid stock price to SQLite via
+  # * `{:ok, {:ok, ticker, price}}`     — Saves to SQLite and broadcasts via PubSub.
+  # * `{:ok, {:error, ticker, reason}}` — Logs fetch/rate-limit errors.
+  # * `{:error, reason}`                — Logs task timeout or process crash.
+  defp handle_fetch_result({:ok, {:ok, ticker, price}}) do
+    case StockFetcher.save_price(ticker, price) do
+      {:ok, stock_price} ->
+        Phoenix.PubSub.broadcast(
+          StockFetcher.PubSub,
+          "stocks:live",
+          {"new_price",
+           %{
+             id: stock_price.id,
+             ticker: stock_price.ticker,
+             price: stock_price.price,
+             timestamp: stock_price.inserted_at
+           }}
+        )
 
-    url = "https://finnhub.io/api/v1/quote?symbol=#{ticker}&token=#{token}"
-
-    case Req.get(url) do
-      {:ok, %Req.Response{status: 200, body: %{"c" => price}}} when price > 0 ->
-        {:ok, ticker, price}
-
-      {:ok, %Req.Response{status: 401}} ->
-        {:error, ticker, "Invalid API Key"}
-
-      {:ok, %Req.Response{status: 429}} ->
-        {:error, ticker, "Rate Limit Reached"}
-
-      {:ok, %Req.Response{status: status}} ->
-        {:error, ticker, "HTTP Error #{status}"}
-
-      {:error, exception} ->
-        {:error, ticker, "Network Failure: #{inspect(exception)}"}
+      {:error, changeset} ->
+        IO.puts("[Error] Failed to save #{ticker} to SQLite: #{inspect(changeset.errors)}")
     end
+  end
+
+  defp handle_fetch_result({:ok, {:error, ticker, reason}}) do
+    IO.puts("[Error] Failed to fetch #{ticker}: #{reason}")
+  end
+
+  defp handle_fetch_result({:error, reason}) do
+    IO.puts("[Error] Task process crashed: #{inspect(reason)}")
   end
 end

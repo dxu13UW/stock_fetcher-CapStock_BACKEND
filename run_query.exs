@@ -16,6 +16,7 @@ file_content =
   |> Enum.join("\n")
 
 # 3. Write the final string block to stock_prices.txt
+# By default, File.write with no flags will overwrite.
 case File.write("stock_prices.txt", file_content) do
   :ok ->
     IO.puts("✨ Success! Saved #{Enum.count(prices)} records to stock_prices.txt")

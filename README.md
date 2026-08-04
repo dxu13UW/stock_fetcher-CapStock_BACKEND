@@ -4,30 +4,43 @@
 
 ## Installation
 
-Step -1: Discord Daniel for .env file and api key
+Step 0: Prerequisites
 
-Step 0: make sure you have
-Download Docker Desktop installed, it can be found here: https://www.docker.com/products/docker-desktop/
+- Docker Desktop: Ensure Docker Desktop is installed and running on your system. You can download it from Docker Desktop.
+  - Windows Users: Ensure virtualization support and WSL 2 are enabled during setup.
 
-Step 1:
-Unzip if zipped, then `cd path/to/extracted/stock_fetcher`
+Step 1: Environment Configuration
+Contact Daniel on Discord to receive the .env file containing the required API keys.
 
-Step 2:
-`docker-compose up -d --build`
+Place the .env file directly into the root directory of the project:
+`FINNHUB_API_TOKEN=your_api_key_here`
 
-Step 3:
-Once Docker Desktop shows that your container is successfully Running, you can jump straight into the application's active memory playground to watch the workers execute:
+Step 2: Download & Navigate
+Unzip the project files (if zipped) and navigate to the project root directory in your terminal or PowerShell:
+`cd path/to/stock_fetcher`
 
-- Open your Docker Desktop application interface.
+Step 3: Build & Launch Container
+Run Docker Compose to build the image and spin up the application container:
+`docker compose up -d --build`
+Note: Database migrations run automatically upon startup inside the container before launching the worker process.
 
-- Click on Containers in the left sidebar and select the running stock_runner container.
+## Verification & Interactive Shell:
 
-- Click on the Terminal (or Exec) tab at the top.
+Once Docker Desktop shows that your `stock_runner` container is Running, you can inspect its live behavior:
 
-Type this command to connect to the live application:
-`iex -S mix`
+Method A: Docker Desktop GUI (Exec Tab)
 
-- What you will see:
+1. Open Docker Desktop.
+2. Go to Containers on the left menu and select `stock_runner`.
+3. Click the Exec tab.
+4. Launch the interactive Elixir shell:
+   `iex -S mix`
+
+Method B: Terminal/CLI
+Alternaitvely, connect directly from local terminal:
+`docker compose exec stock_runner iex -S mix`
+
+Expected output:
 
 ```
 [Worker] Running parallel Finnhub fetch and writing to SQLite...
@@ -35,10 +48,52 @@ INSERT INTO "stock_prices" ("ticker","price",...) VALUES ("AAPL", 333.74...)
 Successfully saved AAPL to SQLite!
 ```
 
-## Run
+## Test Phoenix API
 
-turn on docker, ensure db is running
+`curl -i http://localhost:4000/api/stocks`
 
-`iex -S mix`
+## Test Websocket Upgrade
 
-`iex|1> Code.require_file("run_query.exs")`
+```
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Host: localhost:4000" \
+  -H "Origin: http://localhost:5173" \
+  -H "Sec-WebSocket-Key: SGVsbG8sIFdvcmxkIQ==" \
+  -H "Sec-WebSocket-Version: 13" \
+  http://localhost:4000/socket/websocket
+```
+
+## Diagram
+
+```mermaid
+flowchart TD
+    Client[React Client / Localhost]
+
+    subgraph Phoenix Web Stack
+        EP[1. Endpoint<br/><code>endpoint.ex</code>]
+        RTR[2. Router<br/><code>router.ex</code>]
+        CTRL[3. StockController<br/><code>stock_controller.ex</code>]
+        US[4. UserSocket<br/><code>user_socket.ex</code>]
+        SC[5. StockChannel<br/><code>stock_channel.ex</code>]
+    end
+
+    subgraph Core Domain & Data
+        PS((Phoenix.PubSub))
+        DB[(SQLite Database)]
+    end
+
+    %% HTTP Flow
+    Client -- "HTTP GET /api/stocks" --> EP
+    EP -- "Plug Pipeline" --> RTR
+    RTR -- "Route Match" --> CTRL
+    CTRL -- "Ecto Query" --> DB
+
+    %% WebSocket Flow
+    Client -- "WebSocket ws://localhost:4000/socket" --> EP
+    EP -- "Socket Upgrade" --> US
+    US -- "Topic Match stocks:*" --> SC
+    SC <--> |Subscribe / Broadcast| PS
+    SC -- "Ecto Query / Hydration" --> DB
+```

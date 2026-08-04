@@ -18,4 +18,5 @@ RUN mix compile
 
 RUN mkdir -p /app/db
 
-CMD ["mix", "run", "--no-halt"]
+# updated to run migration immediately during build
+CMD ["sh", "-c", "mix ecto.migrate && mix run --no-halt"]
