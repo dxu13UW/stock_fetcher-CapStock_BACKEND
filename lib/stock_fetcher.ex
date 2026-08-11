@@ -39,7 +39,7 @@ defmodule StockFetcher do
   end
 
   @doc """
-  Call this function with a ticker and price to save it to your SQLite database.
+  Saves a stock price to SQLite and emits a domain telemetry event.
   Example: StockFetcher.save_price("AAPL", 175.50)
   """
   def save_price(ticker, price) do
@@ -53,10 +53,21 @@ defmodule StockFetcher do
     |> Repo.insert()
     |> case do
       {:ok, struct} ->
-        IO.puts("Successfully saved #{struct.ticker} at $#{struct.price} to SQLite!")
+        :telemetry.execute(
+          [:stock_fetcher, :stock_price, :saved],
+          %{price: struct.price},
+          %{stock_price: struct}
+        )
+
         {:ok, struct}
 
       {:error, changeset} ->
+        :telemetry.execute(
+          [:stock_fetcher, :stock_price, :failed],
+          %{count: 1},
+          %{ticker: ticker, changeset: changeset}
+        )
+
         Logger.error("Failed to save stock price: #{inspect(changeset.errors)}")
         {:error, changeset}
     end

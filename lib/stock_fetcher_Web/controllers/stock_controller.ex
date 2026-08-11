@@ -1,21 +1,35 @@
 defmodule StockFetcherWeb.StockController do
   use Phoenix.Controller, formats: [:json]
+
   alias StockFetcher
+  alias StockFetcher.Mock
 
   @watchlist ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
 
   @doc """
   GET /api/stocks
   Returns 12 hours of LTTB downsampled historical prices (max 100 points each)
-  for all core watchlist tickers.
+  for core watchlist tickers.
   """
-  def index(conn, _params) do
-    hydrated_data = StockFetcher.hydrate_watchlist(@watchlist, 12, 100)
+  # Clause 1: Relies on defaults (12 hours, 100 points)
+  def index(conn, %{"mock" => "true"}) do
+    data =
+      MockData.hydrate_watchlist()
+      |> format_watchlist()
 
-    json(conn, %{data: format_watchlist(hydrated_data)})
+    json(conn, %{data: data})
   end
 
-  # --- Helpers ---
+  # Clause 2: Relies on defaults (12 hours, 100 points)
+  def index(conn, _params) do
+    data =
+      StockFetcher.hydrate_watchlist(@watchlist)
+      |> format_watchlist()
+
+    json(conn, %{data: data})
+  end
+
+  # --- Internal Helpers ---
 
   defp format_watchlist(watchlist_map) do
     Map.new(watchlist_map, fn {ticker, prices} ->

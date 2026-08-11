@@ -1,52 +1,49 @@
 defmodule StockFetcherWeb.StockChannel do
+  @moduledoc """
+  Phoenix Channel responsible purely for live real-time stock price streaming.
+
+  Subscribes connected clients to the `"stocks:live"` topic and forwards
+  live price updates broadcast by `Phoenix.PubSub` directly over WebSockets.
+  """
+
   use Phoenix.Channel
-  alias StockFetcher.{Repo, StockPrice}
-  import Ecto.Query
   require Logger
 
-  # Client joins the topic "stocks:live"
+  # Clause 1: Client explicitly joins "stocks:mock"
   @impl true
+  def join("stocks:mock", _params, socket) do
+    Logger.info("Client connected to MOCK stream route")
+    {:ok, socket}
+  end
+
+  # Clause 2: Client explicitly joins "stocks:live"  @impl true
   def join("stocks:live", _params, socket) do
-    # Stream stock price updates
-    Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:broadcasts")
-
-    # Returning `{:ok, payload, socket}` sends the payload immediately as the join response
-    {:ok, %{initial_data: fetch_recent_prices(50)}, socket}
+    Logger.info("Client connected to LIVE stream route")
+    {:ok, socket}
   end
 
+  # Catch-all clause for invalid subtopics
   @impl true
-  def handle_in("request_historical", %{"limit" => limit}, socket) do
-    # Clamp limit to prevent massive DB memory dumps
-    bounded_limit = min(limit, 500)
-    history = fetch_recent_prices(bounded_limit)
-
-    {:reply, {:ok, %{data: history}}, socket}
+  def join("stocks:" <> _invalid, _params, _socket) do
+    {:error, %{reason: "unauthorized_topic"}}
   end
 
+  @doc """
+  Handles process messages emitted over `Phoenix.PubSub` matching `{"new_price", stock_data}`.
+  Pushes live price ticks down the WebSocket connection as `"new_price"` events.
+  """
   @impl true
-  def handle_info({:new_price, stock_data}, socket) do
+  def handle_info({"new_price", stock_data}, socket) do
     push(socket, "new_price", stock_data)
     {:noreply, socket}
   end
 
+  @doc """
+  Invoked when the socket connection is closed or the channel process terminates.
+  """
   @impl true
   def terminate(reason, socket) do
     Logger.info("Client disconnected from '#{socket.topic}'. Reason: #{inspect(reason)}")
     :ok
-  end
-
-  # --- Helper Query ---
-
-  defp fetch_recent_prices(limit) do
-    from(p in StockPrice, order_by: [desc: p.inserted_at], limit: ^limit)
-    |> Repo.all()
-    |> Enum.map(fn p ->
-      %{
-        id: p.id,
-        ticker: p.ticker,
-        price: p.price,
-        timestamp: p.inserted_at
-      }
-    end)
   end
 end

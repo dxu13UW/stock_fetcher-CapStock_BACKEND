@@ -11,8 +11,8 @@ defmodule StockFetcher.LTTB do
   ## Behavior
   * `length(data) <= threshold` — Returns `data` unmodified because downsampling is unnecessary.
   * `threshold < 3`             — Returns `data` unmodified because forming LTTB triangles requires K >= 3
-  * `length(data) > threshold`  — Splits middle data into `threshold - 2` buckets, preserves the first and
-                                  last points, and selects peak/valley points that maximize triangle area.
+  * `length(data) > threshold`  — Splits middle data into `threshold - 2` buckets, preserves the first
+                          and last points, and selects peak/valley points that maximize triangle area.
   """
   def downsample(data, threshold) when length(data) <= threshold or threshold < 3 do
     data
@@ -30,7 +30,7 @@ defmodule StockFetcher.LTTB do
     [first_pt | processed_middle] ++ [last_pt]
   end
 
-  # --- Private Helpers ---
+  # --- Internal Helpers ---
 
   defp process_buckets([], _prev_pt), do: []
 

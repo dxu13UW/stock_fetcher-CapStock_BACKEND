@@ -1,71 +1,41 @@
 defmodule StockFetcherWeb.StockChannelTest do
-  use StockFetcherWeb.ChannelCase, async: false
-  alias StockFetcher.{Repo, StockPrice}
+  use StockFetcherWeb.ChannelCase, async: true
 
-  setup do
-    :ok
-  end
+  alias StockFetcherWeb.StockChannel
 
-  describe "join stocks:live" do
-    test "returns initial snapshot on join" do
-      Repo.insert!(%StockPrice{ticker: "AAPL", price: 185.50})
-      Repo.insert!(%StockPrice{ticker: "NVDA", price: 120.25})
+  describe "joining channels" do
+    test "successfully joins 'stocks:live' route" do
+      assert {:ok, _reply, _socket} =
+               subscribe_and_join(
+                 socket(StockFetcherWeb.UserSocket, "user_id", %{}),
+                 StockChannel,
+                 "stocks:live"
+               )
+    end
 
-      {:ok, reply, _socket} =
-        subscribe_and_join(
-          socket(StockFetcherWeb.UserSocket, "user_id", %{}),
-          StockFetcherWeb.StockChannel,
-          "stocks:live"
-        )
-
-      assert %{initial_data: stocks} = reply
-      assert length(stocks) == 2
-      assert Enum.any?(stocks, fn s -> s.ticker == "AAPL" and s.price == 185.50 end)
+    test "successfully joins 'stocks:mock' route" do
+      assert {:ok, _reply, _socket} =
+               subscribe_and_join(
+                 socket(StockFetcherWeb.UserSocket, "user_id", %{}),
+                 StockChannel,
+                 "stocks:mock"
+               )
     end
   end
 
-  describe "handle_in request_historical" do
-    setup do
-      {:ok, _, socket} =
-        subscribe_and_join(
-          socket(StockFetcherWeb.UserSocket, "user_id", %{}),
-          StockFetcherWeb.StockChannel,
-          "stocks:live"
-        )
-
-      %{socket: socket}
-    end
-
-    test "replies with historical stock data", %{socket: socket} do
-      Repo.insert!(%StockPrice{ticker: "MSFT", price: 381.70})
-
-      ref = push(socket, "request_historical", %{"limit" => 10})
-
-      assert_reply(ref, :ok, %{data: [stock]})
-      assert stock.ticker == "MSFT"
-      assert stock.price == 381.70
-    end
-
-    test "clamps requested limit to 500 safety maximum", %{socket: socket} do
-      ref = push(socket, "request_historical", %{"limit" => 1000})
-
-      assert_reply(ref, :ok, %{data: _history})
-    end
-  end
-
-  describe "pubsub streaming (constant flow)" do
+  describe "pubsub streaming on 'stocks:live'" do
     setup do
       {:ok, _reply, socket} =
         subscribe_and_join(
           socket(StockFetcherWeb.UserSocket, "user_id", %{}),
-          StockFetcherWeb.StockChannel,
+          StockChannel,
           "stocks:live"
         )
 
       %{socket: socket}
     end
 
-    test "pushes new_price event down the socket when PubSub receives a tick", %{socket: _socket} do
+    test "pushes new_price event down socket when PubSub receives a live tick", %{socket: _socket} do
       payload = %{
         id: 1,
         ticker: "NVDA",
@@ -73,10 +43,11 @@ defmodule StockFetcherWeb.StockChannelTest do
         timestamp: DateTime.utc_now()
       }
 
+      # Broadcast using exact system contract: "stocks:live" topic and string tuple {"new_price", payload}
       Phoenix.PubSub.broadcast(
         StockFetcher.PubSub,
-        "stocks:broadcasts",
-        {:new_price, payload}
+        "stocks:live",
+        {"new_price", payload}
       )
 
       assert_push("new_price", ^payload)
@@ -92,14 +63,15 @@ defmodule StockFetcherWeb.StockChannelTest do
       for tick <- ticks do
         Phoenix.PubSub.broadcast(
           StockFetcher.PubSub,
-          "stocks:broadcasts",
-          {:new_price, tick}
+          "stocks:live",
+          {"new_price", tick}
         )
       end
 
-      assert_push("new_price", %{ticker: "AAPL", price: 180.00})
-      assert_push("new_price", %{ticker: "AAPL", price: 180.50})
-      assert_push("new_price", %{ticker: "AAPL", price: 181.25})
+      # Asserts that WebSocket messages are pushed sequentially in FIFO order
+      assert_push("new_price", %{id: 1, ticker: "AAPL", price: 180.00})
+      assert_push("new_price", %{id: 2, ticker: "AAPL", price: 180.50})
+      assert_push("new_price", %{id: 3, ticker: "AAPL", price: 181.25})
     end
   end
 end
