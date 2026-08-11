@@ -84,27 +84,16 @@ defmodule StockFetcher.Worker do
   # Processes the result of an asynchronous fetch task emitted by `Task.async_stream/3`.
   #
   # ## Behavior
-  # * `{:ok, {:ok, ticker, price}}`     — Saves the valid stock price to SQLite via
-  # * `{:ok, {:ok, ticker, price}}`     — Saves to SQLite and broadcasts via PubSub.
+  # * `{:ok, {:ok, ticker, price}}`     — Saves to SQLite via StockFetcher.save_price/2 (emits telemetry event automatically).
   # * `{:ok, {:error, ticker, reason}}` — Logs fetch/rate-limit errors.
   # * `{:error, reason}`                — Logs task timeout or process crash.
   defp handle_fetch_result({:ok, {:ok, ticker, price}}) do
     case StockFetcher.save_price(ticker, price) do
-      {:ok, stock_price} ->
-        Phoenix.PubSub.broadcast(
-          StockFetcher.PubSub,
-          "stocks:live",
-          {"new_price",
-           %{
-             id: stock_price.id,
-             ticker: stock_price.ticker,
-             price: stock_price.price,
-             timestamp: stock_price.inserted_at
-           }}
-        )
+      {:ok, _stock_price} ->
+        :ok
 
-      {:error, changeset} ->
-        IO.puts("[Error] Failed to save #{ticker} to SQLite: #{inspect(changeset.errors)}")
+      {:error, _changeset} ->
+        :error
     end
   end
 

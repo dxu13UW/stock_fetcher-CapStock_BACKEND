@@ -3,11 +3,15 @@ defmodule StockFetcher.Application do
 
   @impl true
   def start(_type, _args) do
+    StockFetcherWeb.TelemetryHandler.attach()
+
     children = [
       StockFetcher.Repo,
       {StockFetcher.Worker, []},
       StockFetcher.Pruner,
       {Phoenix.PubSub, name: StockFetcher.PubSub},
+      {StockFetcher.Mock.Streamer,
+       [enabled: Application.get_env(:stock_fetcher, :enable_mock_stream, true)]},
       StockFetcherWeb.Endpoint
       # Append processes here.
     ]
