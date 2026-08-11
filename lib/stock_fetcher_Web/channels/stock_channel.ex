@@ -1,9 +1,9 @@
 defmodule StockFetcherWeb.StockChannel do
   @moduledoc """
-  Phoenix Channel responsible purely for live real-time stock price streaming.
+  Phoenix Channel responsible for live real-time stock price streaming and historical data requests.
 
-  Subscribes connected clients to the `"stocks:live"` topic and forwards
-  live price updates broadcast by `Phoenix.PubSub` directly over WebSockets.
+  Subscribes connected clients to either `"stocks:live"` or `"stocks:mock"` topics and forwards
+  price updates broadcast over `Phoenix.PubSub` directly to connected WebSocket clients.
   """
 
   use Phoenix.Channel
@@ -16,7 +16,8 @@ defmodule StockFetcherWeb.StockChannel do
     {:ok, socket}
   end
 
-  # Clause 2: Client explicitly joins "stocks:live"  @impl true
+  # Clause 2: Client explicitly joins "stocks:live"
+  @impl true
   def join("stocks:live", _params, socket) do
     Logger.info("Client connected to LIVE stream route")
     {:ok, socket}
@@ -24,7 +25,8 @@ defmodule StockFetcherWeb.StockChannel do
 
   # Catch-all clause for invalid subtopics
   @impl true
-  def join("stocks:" <> _invalid, _params, _socket) do
+  def join("stocks:" <> invalid_topic, _params, _socket) do
+    Logger.warning("Unauthorized channel join attempt on subtopic: stocks:#{invalid_topic}")
     {:error, %{reason: "unauthorized_topic"}}
   end
 
@@ -39,11 +41,41 @@ defmodule StockFetcherWeb.StockChannel do
   end
 
   @doc """
+  Handles client pushes for deeper historical trend data.
+  Flattens historical records into a list so the React frontend
+  can filter by the selected ticker.
+  """
+  @impl true
+  def handle_in("request_historical", %{"limit" => _limit}, socket) do
+    data =
+      get_watchlist_data(socket.topic)
+      |> Map.values()
+      |> List.flatten()
+
+    {:reply, {:ok, %{data: data}}, socket}
+  end
+
+  @doc """
   Invoked when the socket connection is closed or the channel process terminates.
   """
   @impl true
   def terminate(reason, socket) do
     Logger.info("Client disconnected from '#{socket.topic}'. Reason: #{inspect(reason)}")
     :ok
+  end
+
+  # --- Internal Helpers ---
+
+  # Pattern matches when socket.topic is "stocks:mock"
+  defp get_watchlist_data("stocks:mock") do
+    StockFetcher.Mock.Hydration.hydrate_watchlist()
+  end
+
+  # Pattern matches for "stocks:live" with an off-hours empty database fallback
+  defp get_watchlist_data(_live_topic) do
+    case StockFetcher.get_hydrated_watchlist() do
+      map when map_size(map) == 0 -> StockFetcher.Mock.Hydration.hydrate_watchlist()
+      hydrated_map -> hydrated_map
+    end
   end
 end

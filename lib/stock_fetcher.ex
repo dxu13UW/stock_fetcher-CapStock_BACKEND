@@ -7,6 +7,8 @@ defmodule StockFetcher do
   require Logger
   alias StockFetcher.{Repo, StockPrice, LTTB}
 
+  @stocks ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
+
   @doc """
   Fetches stock market data for a given ticker from Finnhub API.
   Accepts optional `opts` keyword list (used to pass `Req.Test` plug options during tests).
@@ -137,6 +139,12 @@ defmodule StockFetcher do
       )
     )
     |> LTTB.downsample(target_points)
+  end
+
+  def get_hydrated_watchlist(watchlist \\ @stocks) do
+    Map.new(watchlist, fn ticker ->
+      {ticker, get_hydrated_prices(ticker)}
+    end)
   end
 
   @doc """

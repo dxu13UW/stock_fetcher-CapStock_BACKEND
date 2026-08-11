@@ -11,16 +11,16 @@ defmodule StockFetcherWeb.StockController do
   Returns 12 hours of LTTB downsampled historical prices (max 100 points each)
   for core watchlist tickers.
   """
-  # Clause 1: Relies on defaults (12 hours, 100 points)
+  # Clause 1: Mocking enabled
   def index(conn, %{"mock" => "true"}) do
     data =
-      MockData.hydrate_watchlist()
+      Mock.Hydration.hydrate_watchlist()
       |> format_watchlist()
 
     json(conn, %{data: data})
   end
 
-  # Clause 2: Relies on defaults (12 hours, 100 points)
+  # Clause 2: Actual connection
   def index(conn, _params) do
     data =
       StockFetcher.hydrate_watchlist(@watchlist)
