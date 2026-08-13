@@ -2,16 +2,24 @@ services:
   stock_runner:
     build: .
     container_name: stock_runner
+    env_file:
+      - .env
     environment:
+      - MIX_ENV=${MIX_ENV:-dev}
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
       - FINNHUB_API_TOKEN=${FINNHUB_API_TOKEN}
-      - MIX_ENV=dev
+      - DATABASE_PATH=/app/db/stock_fetcher_prod.db
+      - PORT=4000
     ports:
       - "4000:4000"
     volumes:
       - .:/app
       - elixir_deps:/app/deps
       - elixir_build:/app/_build
+      # Mount SQLite storage directory to a named Docker volume
+      - sqlite_data:/app/db
 
 volumes:
   elixir_deps:
   elixir_build:
+  sqlite_data:
