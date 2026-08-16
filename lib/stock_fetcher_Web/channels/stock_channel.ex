@@ -9,6 +9,8 @@ defmodule StockFetcherWeb.StockChannel do
   use Phoenix.Channel
   require Logger
 
+  @cooldown_ms 500
+
   # Clause 1: Client explicitly joins "stocks:mock"
   @impl true
   def join("stocks:mock", _params, socket) do
@@ -20,7 +22,7 @@ defmodule StockFetcherWeb.StockChannel do
   @impl true
   def join("stocks:live", _params, socket) do
     Logger.info("Client connected to LIVE stream route")
-    {:ok, socket}
+    {:ok, assign(socket, :last_historical_request_at, 0)}
   end
 
   # Catch-all clause for invalid subtopics
@@ -47,12 +49,24 @@ defmodule StockFetcherWeb.StockChannel do
   """
   @impl true
   def handle_in("request_historical", %{"limit" => _limit}, socket) do
-    data =
-      get_watchlist_data(socket.topic)
-      |> Map.values()
-      |> List.flatten()
+    now = System.monotonic_time(:millisecond)
+    last_request_at = socket.assigns[:last_historical_request_at] || 0
+    time_elapsed = now - last_request_at
 
-    {:reply, {:ok, %{data: data}}, socket}
+    if time_elapsed < @cooldown_ms do
+      retry_after_ms = @cooldown_ms - time_elapsed
+
+      {:reply, {:error, %{reason: "rate_limited", retry_after_ms: retry_after_ms}}, socket}
+    else
+      socket = assign(socket, :last_historical_request_at, now)
+
+      data =
+        get_watchlist_data(socket.topic)
+        |> Map.values()
+        |> List.flatten()
+
+      {:reply, {:ok, %{data: data}}, socket}
+    end
   end
 
   @doc """

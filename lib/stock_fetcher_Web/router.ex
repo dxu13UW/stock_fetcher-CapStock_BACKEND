@@ -5,14 +5,24 @@ defmodule StockFetcherWeb.Router do
   use Phoenix.Router
 
   pipeline :api do
-    plug(:accepts, ["json"])
+    plug :accepts, ["json"]
+    plug CORSPlug, origin: ["http://localhost:5173", "http://localhost:3000"]
+  end
 
-    plug(CORSPlug, origin: ["http://localhost:5173", "http://localhost:3000"])
+  pipeline :hydration_protected do
+    plug StockFetcherWeb.Plugs.HydrationLimiter
   end
 
   scope "/api", StockFetcherWeb do
-    pipe_through(:api)
+    pipe_through :api
 
-    get("/stocks", StockController, :index)
+    # Unprotected / lightweight endpoints
+    get "/health", HealthController, :show
+
+    # Protected endpoints (Path must be provided to scope)
+    scope "/" do
+      pipe_through :hydration_protected
+      get "/stocks", StockController, :index
+    end
   end
 end

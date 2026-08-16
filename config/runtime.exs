@@ -21,7 +21,11 @@ if config_env() == :prod do
     url: [host: host, port: 443, scheme: "https"],
     http: [
       ip: {0, 0, 0, 0},
-      port: port
+      port: port,
+      thousand_island_options: [
+        max_connections: 128,
+        num_acceptors: 4
+      ]
     ],
     secret_key_base: secret_key_base,
     check_origin: [
