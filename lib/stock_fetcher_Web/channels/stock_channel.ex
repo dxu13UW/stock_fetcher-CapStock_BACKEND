@@ -11,6 +11,9 @@ defmodule StockFetcherWeb.StockChannel do
 
   @cooldown_ms 500
 
+  # Tell Phoenix to route "new_price" broadcasts through handle_out/3
+  intercept ["new_price"]
+
   # Clause 1: Client explicitly joins "stocks:mock"
   @impl true
   def join("stocks:mock", _params, socket) do
@@ -32,13 +35,13 @@ defmodule StockFetcherWeb.StockChannel do
     {:error, %{reason: "unauthorized_topic"}}
   end
 
-  @doc """
-  Handles process messages emitted over `Phoenix.PubSub` matching `{"new_price", stock_data}`.
-  Pushes live price ticks down the WebSocket connection as `"new_price"` events.
-  """
   @impl true
-  def handle_info({"new_price", stock_data}, socket) do
-    push(socket, "new_price", stock_data)
+  def handle_out("new_price", payload, socket) do
+    Logger.info(
+      "[StockChannel] Pushing live tick -> #{payload.ticker}: $#{payload.price} to socket #{inspect(socket.transport_pid)}"
+    )
+
+    push(socket, "new_price", payload)
     {:noreply, socket}
   end
 
