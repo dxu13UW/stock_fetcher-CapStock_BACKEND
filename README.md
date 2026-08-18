@@ -1,6 +1,6 @@
 # StockFetcher
 
-**TODO: Add description**
+This backend system is deployed to Fly.io 
 
 ## Installation
 
