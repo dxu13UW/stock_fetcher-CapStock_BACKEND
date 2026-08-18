@@ -79,6 +79,19 @@ defmodule StockFetcherWeb.StockChannel do
   end
 
   @doc """
+  Handles incoming price update messages broadcast over PubSub.
+  """
+  @impl true
+  def handle_info({"new_price", payload}, socket) do
+    Logger.info(
+      "[StockChannel] Pushing live tick -> #{payload.ticker}: $#{payload.price} to socket #{inspect(socket.transport_pid)}"
+    )
+
+    push(socket, "new_price", payload)
+    {:noreply, socket}
+  end
+
+  @doc """
   Invoked when the socket connection is closed or the channel process terminates.
   """
   @impl true
