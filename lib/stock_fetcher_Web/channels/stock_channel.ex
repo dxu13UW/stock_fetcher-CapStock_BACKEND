@@ -35,6 +35,12 @@ defmodule StockFetcherWeb.StockChannel do
     {:error, %{reason: "unauthorized_topic"}}
   end
 
+  @doc """
+  Intercepts outbound `"new_price"` PubSub broadcasts before transmission.
+
+  Logs structured payload details including the target socket transport PID,
+  then pushes the price tick down the WebSocket connection to the client.
+  """
   @impl true
   def handle_out("new_price", payload, socket) do
     Logger.info(
