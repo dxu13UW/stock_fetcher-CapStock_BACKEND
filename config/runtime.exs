@@ -23,7 +23,7 @@ if config_env() == :prod do
       ip: {0, 0, 0, 0},
       port: port,
       thousand_island_options: [
-        max_connections: 128,
+        num_connections: 128,
         num_acceptors: 4
       ]
     ],
@@ -31,6 +31,8 @@ if config_env() == :prod do
     check_origin: [
       "//localhost",
       "//localhost:5173",
-      "//#{host}"
+      "//localhost:3000",
+      "//#{host}",
+      "https://tinle-ri.github.io"
     ]
 end
