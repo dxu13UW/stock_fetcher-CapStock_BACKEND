@@ -37,7 +37,8 @@ defmodule StockFetcher.MixProject do
       {:bandit, "~> 1.5"},
       {:credo, "~>1.7", only: [:dev, :test], runtime: false},
       {:tz, "~> 0.26"},
-      {:hammer, "~> 6.1"}
+      {:hammer, "~> 6.1"},
+      {:corsica, "~> 2.1"}
     ]
   end
 end
