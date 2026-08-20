@@ -2,6 +2,8 @@
 
 This backend system is deployed to Fly.io 
 
+SPA React frontpage deployed [here](https://tinle-ri.github.io/CapStock_FrontEnd/)
+
 ## Installation
 
 Step 0: Prerequisites
