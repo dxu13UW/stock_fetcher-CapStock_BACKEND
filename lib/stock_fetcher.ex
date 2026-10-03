@@ -161,4 +161,17 @@ defmodule StockFetcher do
       {ticker, prices}
     end)
   end
+
+  @doc """
+  Fetches chronological stock ticks for `ticker` between `start_time` and `end_time`.
+  """
+  def get_ticks_between(ticker, %DateTime{} = start_time, %DateTime{} = end_time)
+      when is_binary(ticker) do
+    from(s in StockPrice,
+      where: s.ticker == ^ticker,
+      where: s.inserted_at >= ^start_time and s.inserted_at <= ^end_time,
+      order_by: [asc: s.inserted_at]
+    )
+    |> Repo.all()
+  end
 end

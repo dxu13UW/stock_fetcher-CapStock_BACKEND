@@ -6,7 +6,7 @@ defmodule StockFetcherWeb.StockControllerTest do
     tickers = ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
 
     # Seed database with synthetic records for each ticker
-    for ticker <- tickers, i <- 1..120 do
+    for ticker <- tickers, i <- 1..250 do
       StockFetcher.save_price(ticker, 100.0 + i)
     end
 
@@ -25,9 +25,9 @@ defmodule StockFetcherWeb.StockControllerTest do
     assert Map.has_key?(data, "MSFT")
     assert Map.has_key?(data, "TSLA")
 
-    # Assert downsampling down to 100 points max for AAPL
+    # Assert downsampling down to 200 points max for AAPL
     aapl_points = data["AAPL"]
-    assert length(aapl_points) <= 100
+    assert length(aapl_points) <= 200
     assert is_float(hd(aapl_points)["price"])
     assert is_integer(hd(aapl_points)["timestamp"])
   end

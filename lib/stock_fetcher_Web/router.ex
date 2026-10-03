@@ -16,7 +16,21 @@ defmodule StockFetcherWeb.Router do
   end
 
   pipeline :hydration_protected do
-    plug StockFetcherWeb.Plugs.HydrationLimiter
+    plug StockFetcherWeb.Plugs.HydrationLimiter,
+      limit: 20,
+      scale_ms: 60_000,
+      key_prefix: "hydrate",
+      error: "Hydration rate limit exceeded.",
+      message: "Please stop refreshing the page. Data is streamed to client via active Websocket."
+  end
+
+  pipeline :interactive_protected do
+    plug StockFetcherWeb.Plugs.HydrationLimiter,
+      limit: 120,
+      scale_ms: 60_000,
+      key_prefix: "zoom",
+      error: "Zoom rate limit exceeded.",
+      message: "Too many interactive zoom requests. Please slow down."
   end
 
   scope "/api", StockFetcherWeb do
@@ -29,6 +43,11 @@ defmodule StockFetcherWeb.Router do
     scope "/" do
       pipe_through :hydration_protected
       get "/stocks", StockController, :index
+    end
+
+    scope "/" do
+      pipe_through :interactive_protected
+      get "/stocks/:ticker/intraday", StockController, :intraday
     end
   end
 end

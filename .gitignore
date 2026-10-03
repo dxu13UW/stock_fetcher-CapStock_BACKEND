@@ -48,4 +48,5 @@ stock_fetcher_repo-wal
 stock_prices.txt
 
 # Ignore any SQLite data directory root modifications (if applicable)
+/sqlite_data/*:Zone.Identifier
 /sqlite_data/
