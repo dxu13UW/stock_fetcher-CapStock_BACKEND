@@ -14,12 +14,12 @@ defmodule StockFetcherWeb.StockController do
   (max 200 points each) for core watchlist tickers.
   """
   def index(conn, params) do
-    hours = parse_int(Map.get(params, "hours"), 12)
     threshold = parse_int(Map.get(params, "threshold"), @default_threshold)
+    session_bounds = MarketHours.get_intraday_bounds()
 
     data =
       @watchlist
-      |> StockFetcher.hydrate_watchlist(hours, threshold)
+      |> StockFetcher.hydrate_watchlist_bounds(session_bounds, threshold)
       |> Map.new(fn {ticker, points} -> {ticker, format_points(points)} end)
 
     json(conn, %{data: data})
@@ -69,7 +69,8 @@ defmodule StockFetcherWeb.StockController do
     |> maybe_downsample(threshold)
   end
 
-  defp maybe_downsample(points, threshold) when length(points) > threshold and threshold >= 3 do
+  defp maybe_downsample(points, threshold)
+       when length(points) > threshold and threshold >= 3 do
     LTTB.downsample(points, threshold)
   end
 

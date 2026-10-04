@@ -148,6 +148,25 @@ defmodule StockFetcher do
   end
 
   @doc """
+  Hydrates watchlist tickers bounded by specific session datetimes (e.g. from MarketHours.get_intraday_bounds/0).
+  """
+  def hydrate_watchlist_bounds(
+        tickers,
+        {%DateTime{} = start_dt, %DateTime{} = end_dt},
+        target_points \\ 100
+      ) do
+    Map.new(tickers, fn ticker ->
+      prices =
+        ticker
+        |> String.upcase()
+        |> get_ticks_between(start_dt, end_dt)
+        |> LTTB.downsample(target_points)
+
+      {ticker, prices}
+    end)
+  end
+
+  @doc """
   Hydrates a default or custom list of stock tickers with downsampled historical prices.
   Returns a map keyed by ticker name.
   """
@@ -155,7 +174,8 @@ defmodule StockFetcher do
         tickers \\ ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"],
         hours \\ 12,
         target_points \\ 100
-      ) do
+      )
+      when is_integer(hours) do
     Map.new(tickers, fn ticker ->
       prices = get_hydrated_prices(ticker, hours, target_points)
       {ticker, prices}

@@ -1,14 +1,28 @@
 defmodule StockFetcherWeb.StockControllerTest do
   use StockFetcherWeb.ConnCase, async: true
-  alias StockFetcher
+
+  alias StockFetcher.{MarketHours, Repo, StockPrice}
 
   setup do
     tickers = ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
+    {session_start, _session_end} = MarketHours.get_intraday_bounds()
 
-    # Seed database with synthetic records for each ticker
-    for ticker <- tickers, i <- 1..250 do
-      StockFetcher.save_price(ticker, 100.0 + i)
-    end
+    entries =
+      for ticker <- tickers, i <- 1..250 do
+        timestamp =
+          session_start
+          |> DateTime.add(i * 60, :second)
+          |> DateTime.truncate(:second)
+
+        %{
+          ticker: ticker,
+          price: 100.0 + i,
+          inserted_at: timestamp,
+          updated_at: timestamp
+        }
+      end
+
+    Repo.insert_all(StockPrice, entries)
 
     :ok
   end
@@ -28,6 +42,7 @@ defmodule StockFetcherWeb.StockControllerTest do
     # Assert downsampling down to 200 points max for AAPL
     aapl_points = data["AAPL"]
     assert length(aapl_points) <= 200
+    assert length(aapl_points) > 0
     assert is_float(hd(aapl_points)["price"])
     assert is_integer(hd(aapl_points)["timestamp"])
   end
