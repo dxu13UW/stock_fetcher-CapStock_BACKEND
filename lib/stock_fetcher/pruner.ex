@@ -9,7 +9,7 @@ defmodule StockFetcher.Pruner do
   # Default cleanup interval: 4 hours (in milliseconds)
   @default_interval :timer.hours(4)
   # Default file size before auto cleanup: 2 MB
-  @default_max_bytes 2_000_000
+  @default_max_bytes 50_000_000
 
   # --- Client API ---
 
