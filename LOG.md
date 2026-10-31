@@ -201,3 +201,45 @@ order (§4: Alpaca poller cut only if QBTS isn't needed), staging disables the A
 
 ### LiveView vs. React observations
 - None yet.
+
+### Later on 2026-10-31 — Step A deps and a security fix
+
+**Deps for step A** (`49aaffd`)
+- Added `phoenix_html`, `phoenix_live_view`, `phoenix_live_reload` (dev), `esbuild` and
+  `tailwind` (dev runtime only). Resolved: LiveView **1.2.13** (supports Phoenix `~> 1.7.0`),
+  phoenix_html 4.4.0, phoenix_live_reload 1.7.0, esbuild 0.10.1, tailwind **0.5.2**.
+- Review notes, still to add when needed:
+  - `aliases: aliases()` with `assets.setup` / `assets.build` / `assets.deploy`, before the
+    first asset build and before deploying.
+  - `{:lazy_html, ">= 0.1.0", only: :test}` before the first LiveView test: LiveView 1.1+
+    uses it (not Floki) for `Phoenix.LiveViewTest`, and lists it as optional, so nothing warns.
+  - Dockerfile has no asset step: needs `COPY assets` and `mix assets.deploy` before
+    `mix release`, or production pages get no CSS/JS.
+  - Optional: tighten constraints to `"~> 1.2"` / `"~> 0.5"` to match what resolves.
+
+**Tailwind v3 vs. v4 (open decision)**
+- The `tailwind` package has no Phoenix dependency, so v4 works on Phoenix 1.7.24. Package
+  0.3+ assumes v4: `version: "4.3.0"`, `--input`/`--output` args, no `tailwind.config.js`;
+  config moves into `app.css` (`@import "tailwindcss" source(none);` plus `@source` lines).
+- Trade-off: phx_new 1.7.24's generated files assume v3 (`core_components.ex` icons come from a
+  JS plugin in `tailwind.config.js`); phx_new 1.8's v4 files bring daisyUI and 1.8 layouts.
+- Leaning: v4 with a few hand-written components instead of copying all of
+  `core_components.ex`, no daisyUI. Fallback if time is short: v3 (`~> 0.2.0`) + copy 1.7.24.
+
+**Security fix** (`1b23b90`, lockfile only, kept separate so it can be cherry-picked to `main`)
+- `mix deps.get` reported advisories against versions already locked on `main` (so production
+  is affected), not introduced by the LiveView deps:
+  - bandit 1.12.1 → 1.14.1: 15 advisories, mostly HIGH (HTTP/2 and HTTP/1.1 DoS, WebSocket
+    fragment-limit bypass).
+  - mint 1.9.3 → 1.11.0: 6 HIGH/MEDIUM (memory-exhaustion DoS, response smuggling).
+  - decimal 3.1.1 → 3.2.0: 1 MEDIUM. plug_crypto 2.1.1 → 2.2.1: 1 MEDIUM (CVE-2026-105963).
+  - Transitive: castore, hpax, thousand_island.
+- Verified: no advisories reported; compile clean; 42 tests pass; dev server returned 200 on
+  `/api/health` and 101 on the `/socket/websocket` upgrade (React's channel path).
+- Lesson: my first check cut the `mix deps.get` output at 25 lines and missed most advisories.
+  Read the whole advisory list.
+- **Not yet in production.** To ship: cherry-pick `1b23b90` onto `main`, deploy.
+
+**Next**
+- Decide Tailwind v3 vs. v4; then esbuild/tailwind config, browser pipeline, endpoint socket.
+- Ship the security fix to production.
