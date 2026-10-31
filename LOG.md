@@ -159,3 +159,45 @@ order (§4: Alpaca poller cut only if QBTS isn't needed), staging disables the A
 
 ### LiveView vs. React observations
 - None yet.
+
+---
+
+## 2026-10-31 — Branch, push, step A folder structure
+
+### Planned
+- Create the `liveview` branch, commit and push the docs (for the Nov 1 check-in).
+- Set up the folder structure for step A (LiveView setup).
+
+### Done
+- **Branch:** created `liveview` from `main`; committed `CLAUDE.md`, `PLAN.md`, `LOG.md`
+  (`cb77166`) and pushed to `origin/liveview`.
+- **`CLAUDE.md`:** added Alpaca context (market data only, key names, free-tier limits, one
+  live source per ticker; staging disables the Alpaca poller).
+- **Renamed `lib/stock_fetcher_Web` → `lib/stock_fetcher_web`** and
+  `test/stock_fetcher_Web` → `test/stock_fetcher_web` with `git mv` (history kept).
+  - Why: Phoenix generators write to `stock_fetcher_web/`, which would have created a second
+    folder next to the capitalized one; on the Windows copy (case-insensitive) the two would
+    collide.
+  - No code changes: nothing referenced the path, and module names don't depend on folders.
+- **New empty folders for step A** (`.gitkeep` in each): `assets/{js,css,vendor}`,
+  `lib/stock_fetcher_web/components/layouts`, `lib/stock_fetcher_web/live`,
+  `test/stock_fetcher_web/live`, `priv/static`.
+- **Checks:** `mix compile --warnings-as-errors` clean; `mix test` 42 tests, 0 failures, before
+  and after the rename.
+
+### Next (step A, mine to write)
+- `mix.exs`: `phoenix_live_view`, `phoenix_html`, esbuild, tailwind deps and asset aliases.
+- `config/`: esbuild and tailwind config; dev watchers.
+- `lib/stock_fetcher_web.ex` (`use StockFetcherWeb, :live_view` etc.), `core_components.ex`,
+  `layouts.ex`, root/app layouts.
+- Router: browser pipeline next to the existing `/api` pipeline (`/api` unchanged).
+- Endpoint: LiveView socket and static assets.
+- `.gitignore`: `/priv/static/assets/`.
+- Reference for generated files: a throwaway `mix phx.new` at **1.7.24** (matches `mix.lock`;
+  1.8 uses Tailwind v4 + daisyUI).
+
+### Notes
+- The Windows copy may not handle the case-only rename on pull; re-clone it if it does not.
+
+### LiveView vs. React observations
+- None yet.
