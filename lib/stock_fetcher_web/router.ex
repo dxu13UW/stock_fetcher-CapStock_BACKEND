@@ -4,6 +4,22 @@ defmodule StockFetcherWeb.Router do
   """
   use Phoenix.Router
 
+  import Plug.Conn
+  import Phoenix.Controller
+  import Phoenix.LiveView.Router
+
+  # Browser pages (LiveView). The React SPA never goes through this pipeline.
+  pipeline :browser do
+    plug :accepts, ["html"]
+    # Read the session cookie; LiveView passes it to mount/3 and checks CSRF with it.
+    plug :fetch_session
+    plug :fetch_live_flash
+    # Wrap every page in components/layouts/root.html.heex.
+    plug :put_root_layout, html: {StockFetcherWeb.Layouts, :root}
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers
+  end
+
   pipeline :api do
     plug :accepts, ["json"]
 
@@ -31,6 +47,12 @@ defmodule StockFetcherWeb.Router do
       key_prefix: "zoom",
       error: "Zoom rate limit exceeded.",
       message: "Too many interactive zoom requests. Please slow down."
+  end
+
+  scope "/", StockFetcherWeb do
+    pipe_through :browser
+
+    live "/prices", PricesLive
   end
 
   scope "/api", StockFetcherWeb do
