@@ -305,7 +305,7 @@ first real LiveView (`PricesLive` TODOs 1–5).
 - `mount/3` runs twice: a static HTTP render (full HTML for first paint), then a connected
   mount in a new, long-lived LiveView process when `/live` connects. The server log shows both
   (`Processing with ... Pipelines: [:browser]`, then `CONNECTED TO Phoenix.LiveView.Socket` +
-  `MOUNT`). My answer to *why* subscribe only when connected: TODO.
+  `MOUNT`). My answer to *why* subscribe only when connected: If subscribe happens on the first mount run, then the subscription would be useless, because the first mount call is a one-shot call, not a persistent connection. The process can't push to the browser, and in case it stays alive (HTTP keep-alive), unread messages pile up in its mailbox.
 
 **Notes / open items**
 - Dev `app.js` is 1.15 MB served (inline sourcemap; 320 KB without). Bundle-size metric must

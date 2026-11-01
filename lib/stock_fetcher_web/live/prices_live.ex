@@ -24,6 +24,8 @@ defmodule StockFetcherWeb.PricesLive do
   #   Keep CLAUDE.md's rule: no Finnhub/Alpaca calls from a LiveView.
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")
+
     {:ok, assign(socket, prices: %{})}
   end
 
