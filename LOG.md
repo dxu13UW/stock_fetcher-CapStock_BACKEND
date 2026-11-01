@@ -313,3 +313,85 @@ first real LiveView (`PricesLive` TODOs 1–5).
 - Dockerfile still lacks the asset step (`COPY assets`, `mix assets.deploy` before
   `mix release`). Required before the first LiveView deploy.
 - `/favicon.ico` 404s in dev (harmless; add one to `priv/static/`).
+
+### Later on 2026-10-31 — `PricesLive` TODO 1 done, TODO 2 designed
+
+**TODO 1: subscribe only when connected** (`5f755f6`)
+- Added `if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")`
+  to `mount/3`. My "why" is under *Learned so far* above.
+- My first attempt put the `if` *after* `{:ok, assign(...)}`. Elixir returns the last expression,
+  so `mount/3` returned `nil` (dead render) or `:ok` (connected) and the test failed with
+  `invalid result returned from ... mount/3. Expected {:ok, socket}`. The compiler doesn't warn
+  about a discarded tuple, so only `mix test` caught it. Lesson: side effects first, return
+  tuple last.
+- My first LOG edit didn't land: unsaved/wrong copy. Edit the WSL copy only.
+
+**Editor errors in `mix.exs` (not a project problem)**
+- Neovim's ElixirLS keeps its own build in `.elixir_ls/build/`. After the security bump it still
+  had `hpax 1.0.4` / `thousand_island 1.5.0` while `mix.lock` needs `1.1.0` / `1.6.0`. Its deps
+  check failed before it could recompile, so it stayed broken on every restart (seen in
+  `~/.local/state/nvim/lsp.log`). Fix: `:LspStop`, `rm -rf .elixir_ls/build`, `:LspStart`.
+- Version mismatch to keep in mind: ElixirLS runs Elixir 1.19.5 (mise); the terminal `mix` is
+  1.18.3 (`/usr/bin`). Editor warnings may differ from `mix compile`. Pin one version if it
+  gets confusing.
+
+**TODO 2: design decisions (code not written yet)**
+- **New `StockFetcher.latest_prices/0` instead of reusing `get_hydrated_watchlist/0`.** My first
+  reason was "backward compatible with React", but reusing the old function wouldn't break React
+  either. The real reasons:
+  1. It only looks back 12h, so on weekends (market closed since Friday) it returns empty lists
+     and the page would show nothing. The latest row with no cutoff shows Friday's close.
+  2. It loads up to 12h of rows per ticker and LTTB-downsamples them, just to show one price.
+- **Query: one `group_by ticker` + `max(id)` subquery, not one query per ticker.** Main reason:
+  it returns every ticker in the table, so B2's Alpaca tickers (QBTS) show up without changing a
+  hard-coded list. Fewer queries is a minor win with SQLite (in-process, no network round trip).
+- **`max(id)`, not `max(inserted_at)`.** In production each ticker gets one row per 15s, so no
+  ties. But `inserted_at` is `:utc_datetime` (whole seconds), and the test saves several rows in
+  the same second, so ordering by time would make the test flaky. Auto-increment `id` always
+  increases with each insert.
+- **Load in both mounts (dead render + connected), subscribe only when connected.** Server-
+  rendered first paint is LiveView's main advantage over the React SPA; loading only when
+  connected would give it up. A DB read leaves nothing behind in the one-shot process, unlike a
+  subscription. Order matters: subscribe first, then load, so a tick between the two isn't lost.
+- **`@prices` holds the broadcast shape `%{ticker, price, timestamp}`** for consistency. The
+  broadcast shape can't change (React and `Mock.Streamer` depend on it), and converting once per
+  mount is cheaper than converting every tick. DB rows get converted in `mount/3`
+  (`inserted_at` → `timestamp`); `handle_info` stores payloads as they arrive.
+- I had confused Ecto's `timestamps()` macro (adds `inserted_at` and `updated_at`) with the
+  payload's `timestamp:` key. That key is hand-built in `TelemetryHandler` (line 39) from
+  `inserted_at`.
+
+**How I now understand the two frontends**
+- React: `index.html` is an empty shell → download and run the JS bundle → render a loading
+  state → `GET /api/stocks` (JSON) → React renders in the browser → channel ticks send JSON and
+  React diffs its virtual DOM in the browser.
+- LiveView: `GET /prices` → server runs `mount/3` + `render/1` in a one-shot process → browser
+  paints full HTML with no JS run → `app.js` (deferred) loads and opens `/live` → join sends the
+  signed `data-phx-session` token → server starts a long-lived process, mounts again, sends
+  statics + dynamics → each tick the server sends only changed dynamics (values, e.g.
+  `{"0": "190.10"}`) and the JS patches the DOM.
+- Where the diffing happens: LiveView works out changes on the server and sends a few bytes;
+  React gets the data and works out changes in the browser.
+- On reconnect (sleep, Wi-Fi drop, deploy), LiveView starts a new process and re-runs
+  `mount/3`, and old assigns are gone. Fine for prices (reloaded from the DB); the trading panel
+  must keep cash and positions in the trading module/DB, never only in assigns. React keeps its
+  state in the browser across a socket drop.
+
+**Prediction (first-load metric, before measuring)**
+- LiveView shows prices at first paint, before `app.js` runs. React shows them only after the
+  bundle downloads and `/api/stocks` returns. Loading only on the connected mount would delay
+  LiveView by about the JS load + WebSocket join time. The extra query costs ~1 ms server-side
+  (54 µs measured on the empty dev DB; prod has more rows and no index).
+
+**Found while reading code (later)**
+- `stock_prices` has no index on `ticker` or `inserted_at`; both query styles scan the table.
+  Fine while the Pruner keeps it small.
+- `StockPrice.price` is a `:float` column. The TODO 3 scaffold comment saying "Decimal from the
+  DB" is wrong: the trading module (step C) must convert to Decimal/integer cents itself.
+- Dev DB has 0 rows (the Worker only saves during market hours; `Mock.Streamer` broadcasts
+  without saving), so the initial load can't be seen in the browser until Monday. The test is
+  the proof.
+
+**Next (mine)**
+- Write `latest_prices/0` (+ `@doc`) and a `describe "latest_prices/0"` test; load and convert in
+  `mount/3`; then TODO 3 (`handle_info`), TODO 4 (table), TODO 5 (broadcast test).
