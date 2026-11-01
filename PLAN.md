@@ -205,7 +205,7 @@ stop-losses (the core of the interviewee's workflow), the handover.
 ### Additions
 | Step | Work | Notes |
 |---|---|---|
-| A | LiveView setup | App is JSON-only today. Add `phoenix_live_view`, `phoenix_html`, esbuild, tailwind, a browser pipeline, root/app layouts. `/api` stays untouched. |
+| A | LiveView setup | App is JSON-only today. Add `phoenix_live_view`, `phoenix_html`, esbuild, tailwind, a browser pipeline, root/app layouts. `/api` stays untouched. **Tailwind v4** (CSS-based config in `app.css`, no `tailwind.config.js`); a few hand-written components instead of copying all of `core_components.ex`; no daisyUI. |
 | B | `PricesLive` | Subscribes to `"stocks:live"`. No new polling. |
 | B2 | Alpaca poller | New supervised GenServer, same pattern as the Worker (Req + timer, injected deps). Polls Alpaca's multi-symbol latest-trades endpoint (IEX feed) for tickers Finnhub doesn't cover (e.g. QBTS) and broadcasts to `"stocks:live"` in the **same payload format**, so consumers can't tell the sources apart. |
 | C | Trading module | Plain functions + Ecto schemas (portfolio cash, positions, orders). Integer cents / `Decimal`, never floats. Tests first. |
@@ -293,6 +293,7 @@ prediction in `LOG.md`; afterwards, the result and the gap.
 | Alpaca poller crashes or Alpaca is down | Supervised separately from the Worker (`:one_for_one`), so Finnhub tickers keep updating; extra tickers show their last price as stale. |
 | Prices from two sources (IEX vs. Finnhub) aren't directly comparable | One source per ticker; the UI can label the source. Acceptable for paper trading. |
 | Market closed during the demo | `Mock.Streamer` provides prices outside market hours. |
+| Security fix `1b23b90` (Bandit HIGH DoS advisories) not deployed yet | Accepted 2026-10-31: production ships together with the first basic LiveView release. If any other deploy happens first, include the fix. |
 | Solo time budget (16–24 h) | Daily `LOG.md` check against this schedule; cut early, not on Nov 8. |
 
 ## 10. Definition of done

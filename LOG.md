@@ -200,7 +200,22 @@ order (§4: Alpaca poller cut only if QBTS isn't needed), staging disables the A
 - The Windows copy may not handle the case-only rename on pull; re-clone it if it does not.
 
 ### LiveView vs. React observations
-- None yet.
+- **"Hydration" (first data load) works differently in each UI.**
+  - Two meanings of the word: *data hydration* (client starts empty and fetches what it needs
+    to render; this repo's meaning: `get_hydrated_prices/3`, `hydrate_watchlist/3`,
+    `HydrationLimiter`) vs. *SSR hydration* (React/Next.js: client JS attaches to HTML the
+    server already rendered).
+  - **React SPA:** load JS bundle → render empty shell → separate HTTP request to
+    `/api/stocks` → render → join the channel. The data fetch is its own round trip, which is
+    why it needed a rate limiter.
+  - **LiveView:** no separate data call. `mount/3` loads the data on the server and it ships
+    inside the first HTML. When the WebSocket connects, `mount/3` runs again in the new
+    LiveView process and loads the data a second time.
+  - **Cost on the LiveView side:** the double load. Wrapping the query in `connected?(socket)`
+    saves one query but leaves the first HTML without prices (trades first-paint content for
+    less DB work). Decision pending in `PricesLive` TODO(2).
+  - **Metric impact:** "time until prices appear" should favor LiveView (prices can be in the
+    first response; React waits for bundle + API call). Record a prediction before measuring.
 
 ### Later on 2026-10-31 — Step A deps and a security fix
 
@@ -243,3 +258,58 @@ order (§4: Alpaca poller cut only if QBTS isn't needed), staging disables the A
 **Next**
 - Decide Tailwind v3 vs. v4; then esbuild/tailwind config, browser pipeline, endpoint socket.
 - Ship the security fix to production.
+
+**Decisions (end of 2026-10-31)**
+- **Tailwind v4.** Hand-write the few components needed (prices table, trading form, flash)
+  instead of copying all of `core_components.ex`; no daisyUI. Recorded in `PLAN.md` step A.
+- **No deploy until a big change ships.** Production will be deployed with the first basic
+  LiveView release, and the security fix (`1b23b90`) goes out with it. Until then production
+  keeps the vulnerable Bandit/Mint versions; accepted risk, recorded in `PLAN.md` §9.
+
+### Later on 2026-10-31 — Step A: LiveView plumbing and `PricesLive` scaffold
+
+**Why the agent wrote this part:** I had not written LiveView before. Split agreed: the agent
+writes the plumbing a generator would normally produce (with "why" comments); I write the
+first real LiveView (`PricesLive` TODOs 1–5).
+
+**Plumbing added**
+| File | What / why |
+|---|---|
+| `mix.exs` | `assets.setup` / `assets.build` / `assets.deploy` aliases; `lazy_html` (test) for `Phoenix.LiveViewTest`. My earlier `~> 1.2` / `~> 0.5` constraints kept. |
+| `config/config.exs` | esbuild 0.25.0 profile (`NODE_PATH` → `deps/` so `import "phoenix_live_view"` resolves); Tailwind **4.3.0** profile (`--input`/`--output`, no JS config); LiveView signing salt. |
+| `config/dev.exs` | Watchers (esbuild/tailwind rebuild on save) and live-reload patterns for `live/` and `components/`. |
+| `endpoint.ex` | Cookie session options; `/live` LiveView socket; `Plug.Static` for `priv/static/assets`; dev `LiveReloader` + `CodeReloader`; `Plug.Session` before the router. React's `/socket`, Corsica, and parsers unchanged. |
+| `router.ex` | `:browser` pipeline (session, live flash, root layout, CSRF, secure headers) and `live "/prices", PricesLive`. `:api` and its scopes untouched. |
+| `lib/stock_fetcher_web.ex` | `use StockFetcherWeb, :live_view` / `:html` (shared imports, `~p` verified routes). |
+| `components/layouts.ex`, `layouts/root.html.heex` | Page shell: CSRF meta tag, CSS, JS. No app layout or flash yet (needed for step E). |
+| `assets/css/app.css` | Tailwind v4: `@import "tailwindcss" source(none)`, `@source` for `assets/` and `lib/stock_fetcher_web`, `phx-*-loading` variants. |
+| `assets/js/app.js` | ~10 lines: connect the `LiveSocket` with the CSRF token. All the client JS a basic LiveView needs. |
+| `.gitignore` | `/priv/static/assets/`, `/priv/static/cache_manifest.json`. |
+
+**Scaffold for me:** `live/prices_live.ex` runs (heading + "Waiting for prices…") with TODOs:
+(1) subscribe to `"stocks:live"` only when `connected?/1`, and explain why in this log;
+(2) load starting prices from the DB (`get_hydrated_watchlist/0` vs. a new `latest_prices/0`);
+(3) `handle_info({"new_price", payload}, socket)`; (4) render the table in HEEx;
+(5) a test that broadcasts a fake price. `test/.../prices_live_test.exs` has the first test.
+
+**Verified**
+- `mix format`, `mix compile --warnings-as-errors` clean; `mix test` **43 tests, 0 failures**.
+- Real server: `/prices` 200 HTML; `/assets/css/app.css` and `/assets/js/app.js` 200;
+  `/api/health`, `/api/stocks` 200 JSON (unchanged); `/socket` (React) and `/live` WebSockets
+  101; live-reload socket 101.
+- Installed `inotify-tools` (WSL) so live reload works; confirmed the browser refreshes on save.
+- I changed the heading to "Live Prices", which broke the test's case-sensitive `=~ "Live
+  prices"`; test updated to match.
+
+**Learned so far**
+- `mount/3` runs twice: a static HTTP render (full HTML for first paint), then a connected
+  mount in a new, long-lived LiveView process when `/live` connects. The server log shows both
+  (`Processing with ... Pipelines: [:browser]`, then `CONNECTED TO Phoenix.LiveView.Socket` +
+  `MOUNT`). My answer to *why* subscribe only when connected: TODO.
+
+**Notes / open items**
+- Dev `app.js` is 1.15 MB served (inline sourcemap; 320 KB without). Bundle-size metric must
+  use the minified `mix assets.deploy` build.
+- Dockerfile still lacks the asset step (`COPY assets`, `mix assets.deploy` before
+  `mix release`). Required before the first LiveView deploy.
+- `/favicon.ico` 404s in dev (harmless; add one to `priv/static/`).
