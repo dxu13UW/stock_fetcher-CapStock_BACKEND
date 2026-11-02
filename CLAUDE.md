@@ -56,6 +56,9 @@ approved to work alone. The goal is learning, not just shipping:
 - `StockChannel` intercept/handle_out for "new_price" likely never fires.
 
 ## Artifact 4 scope
+User: "John Daytrader" (pseudonym; asked to stay anonymous, so never record their real name or
+contact details in the repo). Daniel is the interviewer, John the interviewee; transcript and
+answers are in `LOG.md`, the summary in `PLAN.md` §2.
 User story (to be refined by interview): a day trader wants a day-trading simulation using
 real-time prices, plus simulated dividends. Further features to be discovered by asking.
 Dev goals: learn LiveView fundamentals; compare server-rendered LiveView with the React SPA.

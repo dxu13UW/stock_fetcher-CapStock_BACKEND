@@ -24,17 +24,20 @@ The agreed plan lives in `PLAN.md`.
   consistently profitable, with sources and an accuracy note).
   - To check: the Taiwan "fewer than 1% predictably profitable" finding may be Barber, Lee, Liu
     & Odean (2014), *The Cross-Section of Speculator Skill*, not 2020.
-- **Interview 1 held and recorded** (transcript below).
+- **Interview 1 held and recorded** (transcript below). I (Daniel) was the interviewer; John
+  Daytrader was the interviewee.
 - **User identity:** the interviewee asked to remain anonymous, so they are referred to by the
   pseudonym "John Daytrader" in the repo. Real name and contact details are not stored here.
 
 ### Interview 1 — transcript (John Daytrader)
 
-> **Q:** "Most retail day traders lose money. How do you exploit institutional order flow and
+Interviewer: Daniel (me). Interviewee: John Daytrader (pseudonym).
+
+> **Daniel (interviewer):** "Most retail day traders lose money. How do you exploit institutional order flow and
 > liquidity traps to build a consistent edge, and what specific rules govern your entries,
 > stop-outs, and profit scaling?"
 >
-> **Trader:** "The reality is that 99% of day traders fail, so my entire edge comes down to
+> **John (interviewee):** "The reality is that 99% of day traders fail, so my entire edge comes down to
 > doing the exact opposite of what the retail crowd does.
 >
 > Retail traders operate predictably: they look at a key support or resistance level and
@@ -62,11 +65,11 @@ The agreed plan lives in `PLAN.md`.
 > profits and eliminate downside risk, leaving the remaining half to run toward the deeper
 > swing lows."
 >
-> **Q:** "Describe a high-stakes scenario where you put significant personal capital on the
+> **Daniel (interviewer):** "Describe a high-stakes scenario where you put significant personal capital on the
 > line. What was your analytical thesis, how did you handle risk versus emotion under pressure,
 > and what was the outcome?"
 >
-> **Trader:** "A prime example was taking a $60,000 short position on QBTS.
+> **John (interviewee):** "A prime example was taking a $60,000 short position on QBTS.
 >
 > My thesis blended structural market mechanics with behavioral sentiment. Long term, I
 > actually believe in quantum computing—I previously rode QBTS from $4 up to $18—but the recent

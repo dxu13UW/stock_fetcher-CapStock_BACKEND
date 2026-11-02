@@ -19,6 +19,7 @@ agreed, and then recorded in `LOG.md` with the reason.
 
 - **User:** "John Daytrader" (pseudonym), a day trader who asked to remain anonymous. Their
   real name and contact details are kept out of the repo.
+- **Interviews:** I (Daniel) am the interviewer; John Daytrader is the interviewee.
 - **Starting user story:** "As a day trader, I want to practice day trading against real-time
   prices with simulated money, including simulated dividends, so I can test strategies without
   risking real capital."
@@ -77,7 +78,7 @@ definition of "profit."
 
 ### Interview 1 (2026-10-30): John Daytrader's strategy
 
-Full notes are in `LOG.md`. Summary of what they told us:
+Full transcript is in `LOG.md`. Summary of what they told me:
 
 - **Edge:** do the opposite of retail. Retail clusters stop-losses just past obvious
   support/resistance; institutions push price through those levels to trigger the stops and
