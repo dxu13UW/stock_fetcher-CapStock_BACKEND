@@ -10,6 +10,15 @@ defmodule StockFetcherWeb.PricesLiveTest do
     assert html =~ "Live Prices"
   end
 
+  test "mount loads the latest prices from the DB", %{conn: conn} do
+    # With rows in the DB, mount/3 runs the inserted_at -> timestamp conversion.
+    # (An empty DB never calls the Map.new function, which hid a KeyError once.)
+    {:ok, _} = StockFetcher.save_price("ZZTEST", 12.34)
+
+    {:ok, _view, _html} = live(conn, ~p"/prices")
+    # TODO(4): once the table exists, also assert html =~ "ZZTEST".
+  end
+
   # TODO(5) After TODO(1)-(4): prove the page updates from a broadcast.
   #
   #   {:ok, view, _html} = live(conn, ~p"/prices")

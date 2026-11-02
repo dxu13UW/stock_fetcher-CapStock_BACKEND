@@ -111,4 +111,22 @@ defmodule StockFetcherTest do
       assert Repo.get(StockPrice, recent_price.id) != nil
     end
   end
+
+  describe "latest_prices/0" do
+    test "returns only the newest row per ticker" do
+      {:ok, _} = StockFetcher.save_price("AAPL", 100.0)
+      {:ok, _} = StockFetcher.save_price("AAPL", 101.0)
+      {:ok, _} = StockFetcher.save_price("MSFT", 400.0)
+
+      result = StockFetcher.latest_prices()
+      assert length(result) == 2
+      assert Enum.map(result, & &1.ticker) == ["AAPL", "MSFT"]
+      assert Enum.find(result, &(&1.ticker == "AAPL")).price == 101.0
+    end
+
+    test "returns [] when there are no prices" do
+      result = StockFetcher.latest_prices()
+      assert result == []
+    end
+  end
 end

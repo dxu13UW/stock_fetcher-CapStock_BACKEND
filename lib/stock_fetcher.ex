@@ -141,6 +141,26 @@ defmodule StockFetcher do
     |> LTTB.downsample(target_points)
   end
 
+  @doc """
+  Returns the newest `%StockPrice{}` for every ticker in the table, with no time cutoff,
+  so it still works on weekends. Sorted by ticker.
+  """
+  @spec latest_prices() :: [%StockPrice{}]
+  def latest_prices do
+    latest_ids =
+      from(s in StockPrice,
+        group_by: s.ticker,
+        select: max(s.id)
+      )
+
+    Repo.all(
+      from(s in StockPrice,
+        where: s.id in subquery(latest_ids),
+        order_by: s.ticker
+      )
+    )
+  end
+
   def get_hydrated_watchlist(watchlist \\ @stocks) do
     Map.new(watchlist, fn ticker ->
       {ticker, get_hydrated_prices(ticker)}

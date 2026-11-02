@@ -26,7 +26,12 @@ defmodule StockFetcherWeb.PricesLive do
   def mount(_params, _session, socket) do
     if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")
 
-    {:ok, assign(socket, prices: %{})}
+    prices =
+      Map.new(StockFetcher.latest_prices(), fn row ->
+        {row.ticker, %{ticker: row.ticker, price: row.price, timestamp: row.inserted_at}}
+      end)
+
+    {:ok, assign(socket, prices: prices)}
   end
 
   # TODO(3) Handle the broadcast. TelemetryHandler sends
