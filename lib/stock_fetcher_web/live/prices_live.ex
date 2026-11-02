@@ -14,20 +14,34 @@ defmodule StockFetcherWeb.PricesLive do
   # mount/3 runs twice: once in a one-shot process for the plain HTTP render, then again in
   # the long-lived LiveView process when the WebSocket connects (see LOG.md, TODO 1).
   # Subscribe only when connected; load prices on both runs so the first HTML has data.
+  #
+  # Two sources, like the React app's two channel topics:
+  #   /prices              -> "stocks:live" (real Finnhub ticks, saved to the DB; market hours)
+  #   /prices?source=mock  -> "stocks:mock" (Mock.Streamer, every 1.5 s, never saved)
   @impl true
-  def mount(_params, _session, socket) do
-    if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")
+  def mount(params, _session, socket) do
+    source = if params["source"] == "mock", do: :mock, else: :live
 
-    prices =
-      Map.new(StockFetcher.latest_prices(), fn row ->
-        {row.ticker, %{ticker: row.ticker, price: row.price, timestamp: row.inserted_at}}
-      end)
+    if connected?(socket),
+      do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, topic(source))
 
-    {:ok, assign(socket, prices: prices)}
+    {:ok, assign(socket, source: source, prices: initial_prices(source))}
   end
 
-  # Every price broadcast on "stocks:live" (from TelemetryHandler, or Mock.Streamer in dev)
-  # lands here. Map.take drops the payload's `id`, so entries match the mount shape exactly.
+  defp topic(:live), do: "stocks:live"
+  defp topic(:mock), do: "stocks:mock"
+
+  defp initial_prices(:live) do
+    Map.new(StockFetcher.latest_prices(), fn row ->
+      {row.ticker, %{ticker: row.ticker, price: row.price, timestamp: row.inserted_at}}
+    end)
+  end
+
+  # Mock prices only exist in Mock.Streamer's state; the first tick arrives within 1.5 s.
+  defp initial_prices(:mock), do: %{}
+
+  # Every price broadcast on the subscribed topic (TelemetryHandler or Mock.Streamer) lands
+  # here. Map.take drops the payload's `id`, so entries match the mount shape exactly.
   # "new_price" is the only message on this topic; anything else would crash this process,
   # which is the right signal that the payload contract changed.
   @impl true
@@ -42,6 +56,9 @@ defmodule StockFetcherWeb.PricesLive do
     ~H"""
     <main class="mx-auto max-w-2xl p-6">
       <h1 class="text-2xl font-semibold">Live Prices</h1>
+      <p class="mt-1 text-sm text-zinc-500">
+        Source: {if @source == :mock, do: "mock stream (simulated)", else: "live market data"}
+      </p>
 
       <p :if={@prices == %{}} class="mt-4 text-zinc-500">Waiting for prices…</p>
 

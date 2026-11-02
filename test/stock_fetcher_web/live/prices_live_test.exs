@@ -38,10 +38,21 @@ defmodule StockFetcherWeb.PricesLiveTest do
     refute has_element?(view, "#price-ZZLIVE", "1.50")
   end
 
-  defp broadcast_price(ticker, price) do
+  test "?source=mock listens to stocks:mock, not stocks:live", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/prices?source=mock")
+    assert html =~ "mock stream"
+
+    broadcast_price("ZZMOCK", 3.5, "stocks:mock")
+    broadcast_price("ZZREAL", 4.5, "stocks:live")
+
+    assert has_element?(view, "#price-ZZMOCK", "3.50")
+    refute has_element?(view, "#price-ZZREAL")
+  end
+
+  defp broadcast_price(ticker, price, topic \\ "stocks:live") do
     Phoenix.PubSub.broadcast(
       StockFetcher.PubSub,
-      "stocks:live",
+      topic,
       {"new_price", %{id: 1, ticker: ticker, price: price, timestamp: DateTime.utc_now()}}
     )
   end

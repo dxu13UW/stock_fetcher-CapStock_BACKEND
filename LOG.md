@@ -447,9 +447,16 @@ first real LiveView (`PricesLive` TODOs 1–5).
    updates it in place. Unique `ZZ*` tickers because `"stocks:live"` is global and tests run
    async. `render(view)` is a call queued behind the broadcast (same sender), so no sleeps.
 4. Checks: `mix format`, `mix compile --warnings-as-errors`, `mix test` 3 runs, **65 tests, 0
-   failures**. Real server: `/prices` 200, no errors in the log. In dev the table fills from
-   `Mock.Streamer` (a random ticker every 1.5 s); after a refresh it starts empty because Mock
-   doesn't save to the DB.
+   failures**. Real server: `/prices` 200, no errors in the log.
+5. **Correction after I opened the page:** it stayed on "Waiting for prices…". The agent had
+   assumed `Mock.Streamer` broadcasts on `"stocks:live"`; it broadcasts on `"stocks:mock"`
+   (`mock/streamer.ex:9`), and the React app picks a topic by joining `"stocks:mock"` or
+   `"stocks:live"`. Fix: `/prices?source=mock` subscribes to `"stocks:mock"` (starts empty,
+   first tick within 1.5 s; Mock never saves to the DB), `/prices` stays on `"stocks:live"`
+   (real Finnhub ticks, market hours only). The page shows which source it's on. New test: a
+   mock-source page gets `"stocks:mock"` broadcasts and ignores `"stocks:live"`. 66 tests pass.
+   Lessons: check the producer's topic in code instead of assuming; and both UIs can run the
+   metrics on the same mock stream any day, not only during market hours.
 
 ### Trading module draft (step C, agent-written, uncommitted until I review it)
 - `StockFetcher.Trading` + `portfolios`/`positions`/`orders` tables (integer cents), 18 tests.
