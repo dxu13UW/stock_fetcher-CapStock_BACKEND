@@ -5,23 +5,15 @@ defmodule StockFetcherWeb.PricesLive do
   One of these processes runs per open browser tab. It holds the page state in
   `socket.assigns`; whenever assigns change, LiveView re-runs `render/1` and sends
   only the changed parts of the HTML to the browser.
+
+  `@prices` is `%{ticker => %{ticker, price, timestamp}}`, the broadcast payload shape,
+  whether an entry came from the DB (mount) or from a broadcast (handle_info).
   """
   use StockFetcherWeb, :live_view
 
-  # TODO(1) mount/3 runs TWICE: once for the plain HTTP request (so the first paint is
-  #   real HTML, good for SEO and slow networks) and again when the browser's WebSocket
-  #   connects. Subscribe to "stocks:live" only on the second run:
-  #
-  #     if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")
-  #
-  #   Question to answer in LOG.md: why would subscribing on the first (HTTP) run be
-  #   wrong? Hint: which process is running mount/3 at that point, and how long does it live?
-  #
-  # TODO(2) Load starting prices so the page isn't empty until the next 15s tick.
-  #   StockFetcher.get_hydrated_watchlist/0 returns %{"AAPL" => [%StockPrice{}, ...]}
-  #   (oldest first), but it loads 12h of rows per ticker just to show one price. Decide:
-  #   use it, or add a small `latest_prices/0` query to StockFetcher (and test it).
-  #   Keep CLAUDE.md's rule: no Finnhub/Alpaca calls from a LiveView.
+  # mount/3 runs twice: once in a one-shot process for the plain HTTP render, then again in
+  # the long-lived LiveView process when the WebSocket connects (see LOG.md, TODO 1).
+  # Subscribe only when connected; load prices on both runs so the first HTML has data.
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, "stocks:live")
@@ -34,18 +26,16 @@ defmodule StockFetcherWeb.PricesLive do
     {:ok, assign(socket, prices: prices)}
   end
 
-  # TODO(3) Handle the broadcast. TelemetryHandler sends
-  #   {"new_price", %{id: _, ticker: "AAPL", price: 189.5, timestamp: ~N[...]}}
-  #   to every subscriber. Add:
-  #
-  #     @impl true
-  #     def handle_info({"new_price", payload}, socket) do
-  #       ...update the :prices assign (see `update/3`)...
-  #       {:noreply, socket}
-  #     end
-  #
-  #   Note: `price` arrives as a float (TelemetryHandler converts it). Fine for display;
-  #   the trading module must use Decimal from the DB instead (CLAUDE.md money rule).
+  # Every price broadcast on "stocks:live" (from TelemetryHandler, or Mock.Streamer in dev)
+  # lands here. Map.take drops the payload's `id`, so entries match the mount shape exactly.
+  # "new_price" is the only message on this topic; anything else would crash this process,
+  # which is the right signal that the payload contract changed.
+  @impl true
+  def handle_info({"new_price", payload}, socket) do
+    price = Map.take(payload, [:ticker, :price, :timestamp])
+
+    {:noreply, update(socket, :prices, &Map.put(&1, price.ticker, price))}
+  end
 
   @impl true
   def render(assigns) do
@@ -55,10 +45,35 @@ defmodule StockFetcherWeb.PricesLive do
 
       <p :if={@prices == %{}} class="mt-4 text-zinc-500">Waiting for prices…</p>
 
-      <%!-- TODO(4) Render a table: one row per ticker in @prices (ticker, price, time).
-            HEEx basics: {expr} interpolates; :for={x <- list} repeats a tag;
-            :if={cond} shows it conditionally. Sort the tickers so rows don't jump. --%>
+      <table :if={@prices != %{}} id="prices" class="mt-6 w-full text-left">
+        <thead class="border-b border-zinc-300 text-sm text-zinc-500">
+          <tr>
+            <th class="py-2">Ticker</th>
+            <th class="py-2 text-right">Price</th>
+            <th class="py-2 text-right">Updated (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%!-- Sorted by ticker so rows never jump; the id lets LiveView patch one row in place. --%>
+          <tr
+            :for={p <- Enum.sort_by(Map.values(@prices), & &1.ticker)}
+            id={"price-#{p.ticker}"}
+            class="border-b border-zinc-100"
+          >
+            <td class="py-2 font-medium">{p.ticker}</td>
+            <td class="py-2 text-right tabular-nums">${format_price(p.price)}</td>
+            <td class="py-2 text-right tabular-nums text-zinc-500">{format_time(p.timestamp)}</td>
+          </tr>
+        </tbody>
+      </table>
     </main>
     """
   end
+
+  # Display only. Prices are floats here; the trading module converts to integer cents.
+  defp format_price(price) when is_number(price),
+    do: :erlang.float_to_binary(price / 1, decimals: 2)
+
+  # Works for DateTime (DB rows, Mock.Streamer) and NaiveDateTime.
+  defp format_time(%{} = timestamp), do: Calendar.strftime(timestamp, "%H:%M:%S")
 end

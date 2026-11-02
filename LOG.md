@@ -395,3 +395,82 @@ first real LiveView (`PricesLive` TODOs 1–5).
 **Next (mine)**
 - Write `latest_prices/0` (+ `@doc`) and a `describe "latest_prices/0"` test; load and convert in
   `mount/3`; then TODO 3 (`handle_info`), TODO 4 (table), TODO 5 (broadcast test).
+
+## 2026-11-01 — Check-in, `PricesLive` finished (step B), trading module draft (step C)
+
+### Check-in (Canvas, Nov 1)
+- Portfolio card updated (`portfolio-spa/src/data/artifacts.js`, deployed to GitHub Pages):
+  new title/description, status "In progress (check-in Nov 1)", a progress reflection, and the
+  link changed to `.../tree/liveview`. `PLAN.md`/`LOG.md`/`CLAUDE.md` exist only on `liveview`,
+  not `main`, so a repo-root link would have shown no plan or log. The old card also said
+  "Built with a team", which contradicted the solo plan.
+- Pushed `liveview` so the link shows the current log. Portfolio link submitted on Canvas.
+
+### Work split from today (time is short)
+- I write the LiveView parts with skeletons from the agent; the agent drafts the trading module,
+  React panel, and Dockerfile/deploy, and I review each and explain it back here.
+- For speed, the agent wrote TODO 3–5 today at my request (steps below), so the LiveView
+  developer-cost metric counts TODO 1–2 as mine and TODO 3–5 as agent-written.
+
+### TODO 2: initial load (`04854e5`, mine)
+- Added `StockFetcher.latest_prices/0` (`@spec latest_prices() :: [%StockPrice{}]`): a
+  `group_by ticker` + `max(id)` subquery, then the full rows sorted by ticker. `mount/3` loads
+  it on both renders and converts each row to `%{ticker, price, timestamp}`.
+- Bugs I made, and what caught them:
+  1. `select: s.id` instead of `max(s.id)`. SQLite accepts a bare column in a grouped query and
+     returns *some* row's id (Postgres would reject it), so tests would likely have passed
+     while the query was wrong.
+  2. My test treated the result as a map (`result.rows`, `result.tickers`) with made-up fields;
+     `Repo.all` always returns a list (`[]` when empty, never `nil`). Habit: `dbg/1` or
+     `iex -S mix` to see the real shape before writing asserts; a `@spec` shows it on hover (`K`).
+  3. `timestamp: row.timestamp`: `StockPrice` has no `timestamp` field (it's `inserted_at`),
+     so mount would raise `KeyError` as soon as the DB had one row. Tests passed because the
+     test DB was empty and `Map.new([], fun)` never calls `fun`. Added a mount test that saves
+     a row first.
+- Lesson from all three: green tests only cover the paths they execute.
+- Correction: LiveView without `handle_info/2` does **not** crash on an unexpected message; it
+  logs at debug level (`phoenix_live_view/channel.ex:595`). It crashes only when `handle_info`
+  exists and no clause matches.
+
+### TODO 3–5: written by the agent (my request); steps it took
+1. **TODO 3, `handle_info({"new_price", payload}, socket)`:** checked that `"new_price"` is the
+   only message on `"stocks:live"` (grep for `broadcast`), and that both producers
+   (`TelemetryHandler`, `Mock.Streamer`) send `id, ticker, price, timestamp`. `Map.take` keeps
+   the three keys so broadcast entries match the mount shape, then
+   `update(socket, :prices, &Map.put(&1, price.ticker, price))`.
+2. **TODO 4, table in `render/1`:** shown only when `@prices` isn't empty; rows sorted by
+   ticker so they don't jump; each `<tr>` has `id="price-TICKER"` so LiveView patches one row
+   in place; price formatted to 2 decimals, time as `HH:MM:SS` UTC (`Calendar.strftime` works
+   for `DateTime` and `NaiveDateTime`). Replaced the TODO comments with short "why" comments.
+3. **TODO 5, tests:** mount with a DB row now asserts the row renders (`has_element?` on
+   `#price-ZZTEST`); a broadcast test checks a new ticker adds a row and a second broadcast
+   updates it in place. Unique `ZZ*` tickers because `"stocks:live"` is global and tests run
+   async. `render(view)` is a call queued behind the broadcast (same sender), so no sleeps.
+4. Checks: `mix format`, `mix compile --warnings-as-errors`, `mix test` 3 runs, **65 tests, 0
+   failures**. Real server: `/prices` 200, no errors in the log. In dev the table fills from
+   `Mock.Streamer` (a random ticker every 1.5 s); after a refresh it starts empty because Mock
+   doesn't save to the DB.
+
+### Trading module draft (step C, agent-written, uncommitted until I review it)
+- `StockFetcher.Trading` + `portfolios`/`positions`/`orders` tables (integer cents), 18 tests.
+  Market orders, one shared demo portfolio, $100,000 starting cash (assumptions until John
+  answers Q1 and Q3). `mix.exs` gets the standard `test` alias so the test DB is migrated.
+- Design points I must explain back after reading `trading.ex`: (1) why a conditional
+  `UPDATE ... WHERE cash_cents >= total` instead of read-check-write; (2) why the caller passes
+  the price instead of the module looking it up (step D).
+- Not verified: no concurrency test (the SQL sandbox makes one awkward).
+
+### LiveView vs. React observations
+- `PricesLive` is about 80 lines including the template and has no client code beyond the
+  shared `app.js`. The React equivalent needs a fetch for the initial list, a channel join, and
+  client state; the comparison metric will measure it properly.
+- The same shape mismatch (`inserted_at` vs `timestamp`) would exist in React; there it would
+  surface in the browser as `undefined`, here as a server-side `KeyError` in the LiveView process.
+
+### Next (Nov 2 onward)
+- Review `trading.ex`, write the two explanations above, commit step C.
+- Step D notes, LiveView trading panel (E), React panel (F), limit + stop (G-lite).
+- Before the first deploy: Dockerfile asset step, ship with security fix `1b23b90`.
+- Send John follow-up questions 7–12 (Q9 decides whether B2/Alpaca stays in scope).
+- Proposed cuts (record in `PLAN.md` once agreed): dividends (H), 4-hour chart (I), staging,
+  risk preview, Short/Cover, take-profit.
