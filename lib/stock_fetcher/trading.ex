@@ -72,25 +72,15 @@ defmodule StockFetcher.Trading do
   `{:error, reason}`; see `error_message/1` for user-facing text.
   """
   @spec place_market_order(integer(), term(), term(), term(), term()) ::
-          {:ok, %{order: %Order{}, portfolio: %Portfolio{}}} | {:error, error()}
+          {:ok, %{order: Order.t(), portfolio: Portfolio.t()}} | {:error, error()}
   def place_market_order(portfolio_id, side, ticker, quantity, price) do
     with {:ok, side} <- normalize_side(side),
          {:ok, ticker} <- normalize_ticker(ticker),
          {:ok, quantity} <- normalize_quantity(quantity),
-         {:ok, price_cents} <- to_cents(price) do
-      total_cents = quantity * price_cents
-
-      fill = fn ->
-        case side do
-          "buy" -> buy(portfolio_id, ticker, quantity, price_cents, total_cents)
-          "sell" -> sell(portfolio_id, ticker, quantity, price_cents, total_cents)
-        end
-      end
-
-      case Repo.transaction(fill) do
-        {:ok, order} -> {:ok, %{order: order, portfolio: get_portfolio!(portfolio_id)}}
-        {:error, reason} -> {:error, reason}
-      end
+         {:ok, price_cents} <- to_cents(price),
+         {:ok, order} <-
+           Repo.transaction(fn -> fill(side, portfolio_id, ticker, quantity, price_cents) end) do
+      {:ok, %{order: order, portfolio: get_portfolio!(portfolio_id)}}
     end
   end
 
@@ -104,6 +94,13 @@ defmodule StockFetcher.Trading do
   def error_message(:portfolio_not_found), do: "Portfolio not found."
 
   # --- Fills (run inside Repo.transaction/1) ---
+
+  # One clause per side instead of a `case`, which keeps place_market_order/5 shallow.
+  defp fill("buy", portfolio_id, ticker, quantity, price_cents),
+    do: buy(portfolio_id, ticker, quantity, price_cents, quantity * price_cents)
+
+  defp fill("sell", portfolio_id, ticker, quantity, price_cents),
+    do: sell(portfolio_id, ticker, quantity, price_cents, quantity * price_cents)
 
   defp buy(portfolio_id, ticker, quantity, price_cents, total_cents) do
     # Check-and-debit in one statement. Doing the write first also takes SQLite's write lock

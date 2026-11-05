@@ -145,7 +145,7 @@ defmodule StockFetcher do
   Returns the newest `%StockPrice{}` for every ticker in the table, with no time cutoff,
   so it still works on weekends. Sorted by ticker.
   """
-  @spec latest_prices() :: [%StockPrice{}]
+  @spec latest_prices() :: [StockPrice.t()]
   def latest_prices do
     latest_ids =
       from(s in StockPrice,

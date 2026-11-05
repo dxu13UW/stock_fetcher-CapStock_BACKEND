@@ -2,6 +2,8 @@ defmodule StockFetcher.Trading.Order do
   @moduledoc "One filled order. Market orders fill immediately, so every row is a fill."
   use Ecto.Schema
 
+  @type t :: %__MODULE__{}
+
   schema "orders" do
     field(:ticker, :string)
     field(:side, :string)
