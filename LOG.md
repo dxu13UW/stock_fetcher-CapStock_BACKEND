@@ -484,3 +484,62 @@ first real LiveView (`PricesLive` TODOs 1–5).
 - Send John follow-up questions 7–12 (Q9 decides whether B2/Alpaca stays in scope).
 - Proposed cuts (record in `PLAN.md` once agreed): dividends (H), 4-hour chart (I), staging,
   risk preview, Short/Cover, take-profit.
+
+## 2026-11-04 — Reviewing the trading draft (step C), explain-back
+
+### Question 1: why one conditional `UPDATE` instead of read, check, then write
+My answer:
+> With read-then-write, two requests can both read the cash before either one writes, so both
+> pass the check and one debit is lost (a lost update). The conditional
+> `UPDATE ... WHERE cash_cents >= total` does the check and the write in one atomic step, so the
+> second request checks against the cash left after the first, and is rejected if that isn't
+> enough.
+
+How I got there: $1,000 cash, two $800 buys at the same moment (two tabs, a double-click, or
+the LiveView and React panels on the same demo portfolio). Read-then-write: both read $1,000,
+both pass, both write `1000 - 800`, so cash ends at $200 after $1,600 of buys. I first said only
+one order goes through; the timeline showed both do. With one request the two versions are
+identical; the choice only matters under concurrency.
+
+Terms I had mixed up:
+- *Atomic* (can't be split, nothing runs between the check and the write) vs *in sequence*
+  (read-then-write is also sequential; the problem is the gap).
+- *Serialized* (the DB runs the two `UPDATE`s one after another) vs *synchronous* (the caller
+  waits). Only this critical section is serialized; the rest of each request still overlaps.
+- The second request isn't always rejected: it re-checks against the remaining cash.
+
+### Things I learned reading `trading.ex` and its test
+- There's no SQL text in `buy/5`: Ecto generates it. `from(p in Portfolio, where: ...) |>
+  Repo.update_all(inc: [cash_cents: -total])` becomes
+  `UPDATE "portfolios" SET "cash_cents" = "cash_cents" + ? WHERE id = ? AND cash_cents >= ?`
+  (printed with `Ecto.Adapters.SQL.to_sql/3`). `^` values are sent as parameters, not pasted
+  into the SQL.
+- `{debited, _}` is the number of rows changed (0 or 1), not money. It can't exceed 1 because the
+  `WHERE` matches the primary key; `sell/5`'s `reduced` relies on the unique index on
+  `(portfolio_id, ticker)` the same way. `update_all` on a non-unique column would change every
+  matching row.
+- `:ok = Sandbox.checkout(Repo)` raises a `MatchError` if checkout fails. A crash in `setup`
+  fails that one test (reported as failed, not skipped); `setup` runs again for each test, so a
+  shared cause fails all of them one by one. A crash in `setup_all` fails the whole file. The
+  stacktrace's `__ex_unit_setup_0/1` frame shows the crash was in setup, not the test body.
+
+### Question 2: why the caller passes the price instead of `Trading` fetching it
+`Trading` needs a price for the total, the position's average cost, and the order record; the
+question is only who supplies it. My answer:
+> The caller passes the price so the price charged is the price the UI showed when John clicked.
+> If `Trading` looked it up itself, a new tick could arrive in between and he'd be charged a
+> different price. It also lets the mock page trade (mock prices are never saved to the DB) and
+> lets tests pass an exact price.
+
+Caveat for step F: this is safe for the LiveView because `@prices` lives in the server-side
+LiveView process. The React endpoint must not take the price from the request body (anyone could
+send `price: 0.01`); it takes ticker, side and quantity, and the server supplies the price
+(step D decides from where). `Trading` doesn't change either way.
+
+### Step C committed
+Reviewed `trading.ex`, the schemas, migration and tests; both explanations above. Still no
+concurrency test (the SQL sandbox makes one awkward); question 1's reasoning covers it for now.
+
+### Next
+- Step D notes: where the price comes from for each UI, and the process design.
+- LiveView trading panel (step E).

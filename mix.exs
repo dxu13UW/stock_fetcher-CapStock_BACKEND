@@ -58,7 +58,9 @@ defmodule StockFetcher.MixProject do
         "tailwind stock_fetcher --minify",
         "esbuild stock_fetcher --minify",
         "phx.digest"
-      ]
+      ],
+      # Keep the test DB's schema current (new migrations, e.g. the trading tables).
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]
   end
 end

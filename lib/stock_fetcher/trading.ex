@@ -1,0 +1,216 @@
+defmodule StockFetcher.Trading do
+  @moduledoc """
+  Paper trading (PLAN.md step C): one shared module that both UIs call.
+
+  LiveView calls it from `handle_event/3`; React will reach it through an API endpoint (step F).
+  Market orders only. Limit and stop orders (step G) will build on this module.
+
+  Rules:
+    * Money is integer cents and quantities are whole shares. Prices arrive as floats (the
+      `stock_prices.price` column is a float), so they are converted to cents exactly once, at
+      the boundary, through `Decimal`.
+    * This module never fetches prices. The caller passes the latest known price for the
+      ticker, or `nil` when there is none (reported as `:unknown_ticker`). Where that price
+      comes from is a step D (process design) decision.
+    * Concurrent orders on one portfolio are safe: the first statement of each transaction is
+      a conditional `UPDATE` (`... WHERE cash_cents >= total`), so the check and the change
+      happen in one atomic step, and SQLite's single writer serializes the rest.
+  """
+  import Ecto.Query
+
+  alias StockFetcher.Repo
+  alias StockFetcher.Trading.{Order, Portfolio, Position}
+
+  # Assumptions until John answers questions 1 and 3 (PLAN.md section 2): one shared demo
+  # portfolio, $100,000 starting cash (his example position was $60,000).
+  @demo_name "demo"
+  @starting_cash_cents 10_000_000
+
+  @type error ::
+          :invalid_side
+          | :invalid_quantity
+          | :invalid_price
+          | :unknown_ticker
+          | :portfolio_not_found
+          | :insufficient_cash
+          | :insufficient_shares
+
+  def starting_cash_cents, do: @starting_cash_cents
+
+  @doc "Returns the shared demo portfolio (with positions), creating it on first use."
+  def demo_portfolio do
+    # on_conflict: :nothing makes concurrent first calls safe: only one row is ever created.
+    Repo.insert!(%Portfolio{name: @demo_name, cash_cents: @starting_cash_cents},
+      on_conflict: :nothing,
+      conflict_target: :name
+    )
+
+    Portfolio |> Repo.get_by!(name: @demo_name) |> Repo.preload(:positions)
+  end
+
+  @doc "Fetches a portfolio with its positions (sorted by ticker). Raises if it doesn't exist."
+  def get_portfolio!(id), do: Portfolio |> Repo.get!(id) |> Repo.preload(:positions)
+
+  @doc "Lists a portfolio's filled orders, newest first."
+  def list_orders(portfolio_id) do
+    Repo.all(
+      from(o in Order,
+        where: o.portfolio_id == ^portfolio_id,
+        order_by: [desc: o.id]
+      )
+    )
+  end
+
+  @doc """
+  Fills a market order immediately at `price`.
+
+  `side` is `"buy"`/`"sell"` (or the atoms). `quantity` may be an integer or a string from a
+  form or JSON body. `price` is the latest known price in dollars (float, integer, or
+  `Decimal`), or `nil` if the ticker has no price.
+
+  Returns `{:ok, %{order: order, portfolio: portfolio}}` (portfolio reloaded with positions) or
+  `{:error, reason}`; see `error_message/1` for user-facing text.
+  """
+  @spec place_market_order(integer(), term(), term(), term(), term()) ::
+          {:ok, %{order: %Order{}, portfolio: %Portfolio{}}} | {:error, error()}
+  def place_market_order(portfolio_id, side, ticker, quantity, price) do
+    with {:ok, side} <- normalize_side(side),
+         {:ok, ticker} <- normalize_ticker(ticker),
+         {:ok, quantity} <- normalize_quantity(quantity),
+         {:ok, price_cents} <- to_cents(price) do
+      total_cents = quantity * price_cents
+
+      fill = fn ->
+        case side do
+          "buy" -> buy(portfolio_id, ticker, quantity, price_cents, total_cents)
+          "sell" -> sell(portfolio_id, ticker, quantity, price_cents, total_cents)
+        end
+      end
+
+      case Repo.transaction(fill) do
+        {:ok, order} -> {:ok, %{order: order, portfolio: get_portfolio!(portfolio_id)}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc "User-facing text for an error reason. Both UIs show the same messages (benchmark spec)."
+  def error_message(:insufficient_cash), do: "Insufficient cash for this order."
+  def error_message(:insufficient_shares), do: "You can't sell more shares than you hold."
+  def error_message(:unknown_ticker), do: "Unknown ticker: no price available."
+  def error_message(:invalid_quantity), do: "Quantity must be a whole number greater than 0."
+  def error_message(:invalid_side), do: "Side must be buy or sell."
+  def error_message(:invalid_price), do: "No valid price for this ticker."
+  def error_message(:portfolio_not_found), do: "Portfolio not found."
+
+  # --- Fills (run inside Repo.transaction/1) ---
+
+  defp buy(portfolio_id, ticker, quantity, price_cents, total_cents) do
+    # Check-and-debit in one statement. Doing the write first also takes SQLite's write lock
+    # at the start of the transaction, so the reads below can't go stale.
+    {debited, _} =
+      from(p in Portfolio, where: p.id == ^portfolio_id and p.cash_cents >= ^total_cents)
+      |> Repo.update_all(inc: [cash_cents: -total_cents])
+
+    if debited == 0 do
+      Repo.rollback(
+        if Repo.get(Portfolio, portfolio_id), do: :insufficient_cash, else: :portfolio_not_found
+      )
+    end
+
+    case Repo.get_by(Position, portfolio_id: portfolio_id, ticker: ticker) do
+      nil ->
+        Repo.insert!(%Position{
+          portfolio_id: portfolio_id,
+          ticker: ticker,
+          quantity: quantity,
+          avg_cost_cents: price_cents
+        })
+
+      position ->
+        new_quantity = position.quantity + quantity
+        cost_cents = position.quantity * position.avg_cost_cents + total_cents
+
+        position
+        |> Ecto.Changeset.change(
+          quantity: new_quantity,
+          # Integer division rounded half up, so the average stays in whole cents.
+          avg_cost_cents: div(cost_cents + div(new_quantity, 2), new_quantity)
+        )
+        |> Repo.update!()
+    end
+
+    insert_order(portfolio_id, "buy", ticker, quantity, price_cents, total_cents)
+  end
+
+  defp sell(portfolio_id, ticker, quantity, price_cents, total_cents) do
+    {reduced, _} =
+      from(p in Position,
+        where: p.portfolio_id == ^portfolio_id and p.ticker == ^ticker and p.quantity >= ^quantity
+      )
+      |> Repo.update_all(inc: [quantity: -quantity])
+
+    if reduced == 0, do: Repo.rollback(:insufficient_shares)
+
+    from(p in Portfolio, where: p.id == ^portfolio_id)
+    |> Repo.update_all(inc: [cash_cents: total_cents])
+
+    # A fully closed position is removed rather than kept at 0 shares.
+    from(p in Position,
+      where: p.portfolio_id == ^portfolio_id and p.ticker == ^ticker and p.quantity == 0
+    )
+    |> Repo.delete_all()
+
+    insert_order(portfolio_id, "sell", ticker, quantity, price_cents, total_cents)
+  end
+
+  defp insert_order(portfolio_id, side, ticker, quantity, price_cents, total_cents) do
+    Repo.insert!(%Order{
+      portfolio_id: portfolio_id,
+      side: side,
+      ticker: ticker,
+      quantity: quantity,
+      price_cents: price_cents,
+      total_cents: total_cents
+    })
+  end
+
+  # --- Input normalization (both UIs send strings) ---
+
+  defp normalize_side(side) when side in ["buy", :buy], do: {:ok, "buy"}
+  defp normalize_side(side) when side in ["sell", :sell], do: {:ok, "sell"}
+  defp normalize_side(_), do: {:error, :invalid_side}
+
+  defp normalize_ticker(ticker) when is_binary(ticker) do
+    case ticker |> String.trim() |> String.upcase() do
+      "" -> {:error, :unknown_ticker}
+      ticker -> {:ok, ticker}
+    end
+  end
+
+  defp normalize_ticker(_), do: {:error, :unknown_ticker}
+
+  defp normalize_quantity(quantity) when is_integer(quantity) and quantity > 0,
+    do: {:ok, quantity}
+
+  defp normalize_quantity(quantity) when is_binary(quantity) do
+    case Integer.parse(String.trim(quantity)) do
+      {n, ""} when n > 0 -> {:ok, n}
+      _ -> {:error, :invalid_quantity}
+    end
+  end
+
+  defp normalize_quantity(_), do: {:error, :invalid_quantity}
+
+  defp to_cents(nil), do: {:error, :unknown_ticker}
+  defp to_cents(price) when is_float(price), do: price |> Decimal.from_float() |> to_cents()
+  defp to_cents(price) when is_integer(price), do: price |> Decimal.new() |> to_cents()
+
+  # Decimal avoids float artifacts such as 189.57 * 100 == 18956.999999999996.
+  defp to_cents(%Decimal{} = price) do
+    cents = price |> Decimal.mult(100) |> Decimal.round(0, :half_up) |> Decimal.to_integer()
+    if cents > 0, do: {:ok, cents}, else: {:error, :invalid_price}
+  end
+
+  defp to_cents(_), do: {:error, :invalid_price}
+end
