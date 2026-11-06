@@ -17,8 +17,12 @@ RUN mix deps.compile
 COPY config config
 COPY lib lib
 COPY priv priv
+# After lib: Tailwind scans lib/stock_fetcher_web for the classes it needs (app.css @source).
+COPY assets assets
 
 RUN mix compile
+# Before release: minified CSS/JS + digests go into priv/static, which the release copies.
+RUN mix assets.deploy
 RUN mix release
 FROM alpine:edge AS app
 
