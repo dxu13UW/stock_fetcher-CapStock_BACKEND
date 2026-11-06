@@ -1,5 +1,7 @@
 defmodule StockFetcher.TradingTest do
-  use ExUnit.Case, async: true
+  # async: false: this module writes to SQLite, which has one write lock held by each test's
+  # sandbox transaction until it ends; async writers time out with "Database busy".
+  use ExUnit.Case, async: false
 
   alias StockFetcher.{Repo, Trading}
   alias StockFetcher.Trading.{Order, Portfolio}

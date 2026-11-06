@@ -156,12 +156,11 @@ Both UIs call one shared Elixir trading module. LiveView calls it from `handle_e
 reaches it through new API endpoints or channel messages.
 
 The benchmark stays **market orders only** so it is small enough to build twice and compare
-fairly. Interview-driven order types go in LiveView only (below). *(Proposed after interview 1;
-confirm.)*
+fairly. Interview-driven order types go in LiveView only (below). *(Confirmed 2026-11-04.)*
 
 ### LiveView only
 - Read-only live prices page (`PricesLive`).
-- **From interview 1, in priority order (proposed; confirm):**
+- **From interview 1, in priority order** (items 3–5 and 7 cut 2026-11-04, see below):
   1. Limit-order entries (resting until a broadcast price crosses the limit).
   2. Hard stop-loss attached at entry.
   3. Pre-trade risk preview: position size, $ at risk, % at risk.
@@ -180,7 +179,21 @@ confirm.)*
 - Multi-node deployment (SQLite is single writer, single node).
 - Replacing the React SPA. It keeps working throughout.
 
-### Cut order if time runs short
+### Agreed scope (2026-11-04)
+John confirmed the remaining to-do list is enough and asked for no further scope. Building:
+the benchmark panel in both UIs, limit entries with hard stop-losses, and trade history (from
+`list_orders/1`). Cut: dividends (H), 4-hour candles (I), staging, Short/Cover, take-profit,
+pre-trade risk preview, and the Alpaca poller (B2), so trading uses the 5 Finnhub tickers (plus
+the mock stream). Metrics: the core set in section 7 plus click-to-confirmation latency and
+developer cost.
+
+**Bonus (only after everything above ships):** a hidden text console for placing orders in plain
+language, e.g. "buy 10 AAPL". A `claude -p` (headless Claude Code) call turns the text into
+`{side, ticker, quantity}`, shows the parsed order for confirmation, then calls the same order
+API as the React panel (step F), so the server still supplies the price. Runs locally; the
+model never sees credentials and can only reach the paper-trading endpoint.
+
+### Cut order if time runs short (original; superseded by the agreed scope above)
 1. Dividends → seeded data with a minimal display, or dropped if the interviewee confirms they
    don't need them.
 2. 4-hour candles and zones (interview item 7, step I).
@@ -276,11 +289,11 @@ prediction in `LOG.md`; afterwards, the result and the gap.
 |---|---|
 | Fri Oct 30 – Sat Oct 31 | `PLAN.md`, `LOG.md`, commit `CLAUDE.md`, create `liveview` branch. Interview 1 done; send follow-up questions 7–12. Start LiveView setup (A). |
 | **Sun Nov 1** | **Check-in:** portfolio card showing progress; plan and log in the repo. |
-| Mon Nov 2 – Tue Nov 3 | `PricesLive` (B), Alpaca poller (B2). Trading module with tests (C), process design (D). |
-| Wed Nov 4 | LiveView trading panel (E). |
-| Thu Nov 5 | React trading panel (F). |
-| Fri Nov 6 | Limit entries, stop-losses, risk preview (G). |
-| Sat Nov 7 | Metrics. Deploy, hand over to the user, apply feedback. Dividends (H) only if time remains. |
+| Mon Nov 2 – Tue Nov 3 | `PricesLive` (B), trading module with tests (C). *(Actual: C committed Wed Nov 4; B2 cut.)* |
+| Wed Nov 4 | Process design notes (D). LiveView trading panel with trade history (E). *(Rescheduled 2026-11-04.)* |
+| Thu Nov 5 | Dockerfile asset step and first deploy (with `1b23b90`). React trading panel (F). |
+| Fri Nov 6 | Limit entries and stop-losses (G), deploy. |
+| Sat Nov 7 | Handover to John on the deployed app, small fixes. Metrics, both UIs. |
 | **Sun Nov 8, 11:59 PM** | **Due:** final `LOG.md` entry, portfolio card with link and reflection, Canvas submission. |
 
 ## 9. Risks

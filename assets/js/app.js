@@ -15,3 +15,12 @@ liveSocket.connect()
 
 // Handy in the browser console: liveSocket.enableDebug() logs every diff.
 window.liveSocket = liveSocket
+
+// Light/dark toggle. A pure client-side preference: no server round trip, no LiveView event.
+// The inline script in root.html.heex applies the saved theme before first paint.
+document.getElementById("theme-toggle")?.addEventListener("click", () => {
+  const root = document.documentElement
+  const theme = root.dataset.theme === "dark" ? "light" : "dark"
+  root.dataset.theme = theme
+  try { localStorage.setItem("theme", theme) } catch (_) {}
+})

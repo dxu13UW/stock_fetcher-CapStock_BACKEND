@@ -11,3 +11,12 @@
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
 @custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+/* Dark mode follows <html data-theme="dark">, set by the toggle (root layout + app.js),
+   instead of Tailwind's default of following the OS setting only. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Native controls (select, number input, scrollbars) switch to their dark look too. */
+[data-theme=dark] {
+  color-scheme: dark;
+}

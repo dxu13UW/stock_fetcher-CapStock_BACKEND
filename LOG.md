@@ -540,6 +540,95 @@ send `price: 0.01`); it takes ticker, side and quantity, and the server supplies
 Reviewed `trading.ex`, the schemas, migration and tests; both explanations above. Still no
 concurrency test (the SQL sandbox makes one awkward); question 1's reasoning covers it for now.
 
+### John's update: scope is final
+John replied that everything on the current to-do list is good enough and there's no need to
+expand scope further. Recorded in `PLAN.md` §4 "Agreed scope" and the §8 schedule: build both
+trading panels, limit entries with stop-losses, and trade history; cut dividends, 4-hour candles,
+staging, Short/Cover, take-profit, the risk preview, and the Alpaca poller (5 Finnhub tickers plus
+the mock stream). I'll confirm at the handover that the Finnhub tickers are enough to practise on
+in place of QBTS.
+
+### Step D: where the price comes from
+My answer:
+1. The LiveView's Buy handler (`handle_event`) takes the price from `socket.assigns.prices`,
+   the same data `render/1` shows as `@prices`, kept current by `handle_info`.
+2. If the ticker has no price, it passes `nil`; `to_cents(nil)` returns
+   `{:error, :unknown_ticker}` and the LiveView shows `Trading.error_message(:unknown_ticker)`
+   ("Unknown ticker: no price available."). No cash moves and no order is written.
+3. Source of truth: the server decides the price, never the client, or a client could send its
+   own price. React sends ticker, side and quantity only.
+
+Things I mixed up on the way: the layout holds no data (it's the HTML wrapper); the DB is only
+read once, in `mount/3`; `@name` is a module attribute in normal code but `assigns.name` inside a
+`~H` (HEEx) template, so callbacks must write `socket.assigns.prices`.
+
+Resting limit/stop orders (step G) will need their own supervised process watching the price
+stream, outside any LiveView; designed on Friday.
+
+### Step E: LiveView trading panel (agent-written except the `handle_event` case)
+- On `PricesLive`, under the prices table: a form with a ticker dropdown (tickers in `@prices`),
+  quantity, and Buy/Sell buttons (the clicked button arrives as `"side"`); cash; positions with
+  average cost, live price and unrealized P/L; order history. Works on `?source=mock` too.
+- Dropdown chosen over a text field (fewer typos). "Unknown ticker" is still tested by sending
+  the event directly. The React panel must use a dropdown too, to match.
+- `handle_event` reads the price from `socket.assigns.prices` (step D) and calls `Trading`. The
+  `case` on the result is mine to write (TODO in the code); 5 panel tests fail until it's done.
+- Bonus idea recorded in `PLAN.md` §4: a hidden `claude -p` console for plain-text orders.
+- Light/dark toggle (agent-written): a plain JS button in the root layout plus an inline
+  `<head>` script that applies the saved theme before first paint; Tailwind's `dark:` variant
+  keys off `<html data-theme="dark">`. LiveView vs React note: a client-only preference stays
+  in client JS. Sending it through a LiveView event would add a server round trip for nothing.
+
+### Flaky tests: "Database busy" (and question 1 again)
+- After the panel, about 1 run in 4 failed with `Exqlite.Error: Database busy`, in tests I
+  hadn't touched. Cause: SQLite has one write lock, each test's sandbox transaction holds it
+  until the test ends, and now every `PricesLive` test writes (the demo portfolio on mount), so
+  async writers queued past the 2 s busy timeout.
+- Tried: a longer busy timeout (still flaky), and making `demo_portfolio/0` read before
+  inserting (much worse: a transaction that has already read can't wait for the write lock, so
+  SQLite fails it immediately). That is the same read-then-write problem as question 1, and why
+  `buy/5` writes first. Reverted both.
+- Fix: the four modules that write to the DB run `async: false` (the approach the
+  `ecto_sqlite3` docs suggest). 10 runs in a row, 0 failures; the suite still takes 0.4 s.
+
 ### Next
-- Step D notes: where the price comes from for each UI, and the process design.
-- LiveView trading panel (step E).
+- Write the `handle_event` case; the panel tests go green.
+- Dockerfile asset step and first deploy; React panel (F).
+- Book the Saturday Nov 7 handover with John.
+
+## 2026-11-06 — `handle_event` case done (step E committed)
+
+### The `case` (mine), and the mistakes on the way
+- Attempt 1: assigned `orders: order` (one struct where the template loops over a list →
+  `Protocol.UndefinedError: Enumerable`) and had no `{:error, _}` branch (→ `CaseClauseError`).
+- Attempt 2: called `error_message/1` without `Trading.`, and the error branch set
+  `portfolio: nil` / `orders: nil`, wiping what the page showed. On an error nothing but the
+  message should change.
+- Attempt 3: both branches right, but a leftover `{:noreply, socket}` after the `case`. A function
+  returns its last expression, so the `case` result was thrown away and the old socket returned.
+  Deleting it: 72 tests, 0 failures, 5 runs in a row.
+
+### Things I learned
+- `assign(socket, ...)` takes the socket first and returns a new one (data is immutable), which
+  is also why it pipes: `socket |> assign(...) |> assign(...)`. Keys not mentioned are kept.
+- A callback is a function I write but the framework calls (`mount`, `render`, `handle_event`,
+  `handle_info`). I never call `handle_event` myself; the LiveView process does when the form
+  is submitted. Same idea as `onClick={handleBuy}` in React or the function given to `Enum.map`.
+- `@impl true` ≈ Java's `@Override` / C++'s `override`: a compile-time check that the function
+  is a callback of the behaviour (`use Phoenix.LiveView` adds `@behaviour`), so a typo like
+  `handle_evnet` warns instead of silently never being called. A behaviour is like an interface,
+  but without objects or inheritance: state comes in as an argument (`socket`) and goes back out.
+
+### LiveView vs. React observations
+- My first impression was "beauty in simplicity" thanks to metaprogramming. More precisely:
+  Elixir's simplicity comes from pattern matching, immutable data and processes (`trading.ex`
+  is plain functions plus Ecto's query macros). Phoenix adds macros on top (`use`, `~H`, Ecto's
+  `from`) so the framework's complexity stays out of my code. The price: the code looks like
+  one thing and compiles to another. `@prices` means `assigns.prices` inside `~H` but a module
+  attribute elsewhere, and errors can point into generated functions (`__ex_unit_setup_0/1`).
+  React has the same trade-off with JSX, which compiles to function calls.
+
+### Next
+- Dockerfile asset step and first deploy (with `1b23b90`); check the React SPA still works.
+- React panel (F), then limit/stop orders (G).
+- Book the Saturday Nov 7 handover with John.

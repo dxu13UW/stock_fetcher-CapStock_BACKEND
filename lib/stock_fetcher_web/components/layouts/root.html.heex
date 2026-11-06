@@ -5,11 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
     <title>Capstock</title>
+    <%!-- Runs before the CSS paints, so a dark-mode page never flashes white. Saved choice
+         first, else the OS setting. Storage can throw (private mode), hence the try. --%>
+    <script>
+      (() => {
+        let theme = null;
+        try { theme = localStorage.getItem("theme"); } catch (_) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
   </head>
-  <body class="bg-white text-zinc-900 antialiased">
+  <body class="bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
+    <%!-- In the root layout, outside the LiveView, so LiveView patches never touch it. --%>
+    <button
+      id="theme-toggle"
+      type="button"
+      aria-label="Toggle dark mode"
+      title="Toggle dark mode"
+      class="fixed top-4 right-4 rounded-full border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+    >
+      <span class="dark:hidden">☾ Dark</span>
+      <span class="hidden dark:inline">☀ Light</span>
+    </button>
     {@inner_content}
   </body>
 </html>
