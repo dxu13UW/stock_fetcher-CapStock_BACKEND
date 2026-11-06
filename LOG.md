@@ -628,7 +628,35 @@ stream, outside any LiveView; designed on Friday.
   attribute elsewhere, and errors can point into generated functions (`__ex_unit_setup_0/1`).
   React has the same trade-off with JSX, which compiles to function calls.
 
+### Dockerfile asset step and first deploy of the branch (`e11824a`)
+- The build stage copied only `config`, `lib`, `priv`, so a release would ship with no CSS/JS:
+  unstyled page, and no `app.js` means no WebSocket, so the buttons would do nothing. Added
+  `COPY assets assets` after `lib` (Tailwind scans `lib/stock_fetcher_web` for class names via
+  `@source`) and `RUN mix assets.deploy` before `mix release` (the release copies `priv/static`
+  when it runs). Agent-written at my request; I found where the copies happen.
+- First local `docker build` died with exit 137 (out of memory) at `mix local.hex`, before our
+  lines: containers here allow ~1 billion open files and the Erlang VM sizes a table from that.
+  Local builds need `docker build --ulimit nofile=65536:65536 .`; `fly deploy` builds remotely.
+- `fly deploy` (with security fix `1b23b90`): migrations created the trading tables on the
+  existing volume. Checked in production: `/api/health` and `/api/stocks` 200, React channel
+  socket from `tinle-ri.github.io` 101, `/prices` 200 with the panel, assets served, `/live`
+  socket 101 from its own origin and 403 from a foreign one. No test order placed: it would
+  show up in the demo portfolio John uses at the handover.
+- Metric for later: LiveView first load transfers JS 56.7 KB and CSS 3.7 KB (brotli-compressed
+  on the way out, though `Plug.Static` has `gzip: false`).
+
+### LiveView vs. React observations (deploy)
+- No domain needed: Fly gives every app `<app>.fly.dev` with HTTPS. The LiveView page lives on
+  the same app as the API, because the server renders it. React is static files on GitHub
+  Pages calling the Fly backend: two hosts, so the backend needs CORS/`check_origin` entries for
+  the Pages origin. LiveView's socket only accepts its own origin.
+- LiveView wins: one deploy, nothing to configure between frontend and backend, and a backend
+  change ships together with its UI, so they can't drift.
+- React wins: GitHub Pages serves from a CDN even if Fly is down, so the SPA can still load and
+  show "can't reach server"; if the one Fly machine is down, `/prices` doesn't load at all. And
+  every LiveView interaction goes to the single machine in `sjc`, which a far-away user feels
+  on each click (should show up in the throttled click-to-confirmation metric).
+
 ### Next
-- Dockerfile asset step and first deploy (with `1b23b90`); check the React SPA still works.
 - React panel (F), then limit/stop orders (G).
 - Book the Saturday Nov 7 handover with John.
