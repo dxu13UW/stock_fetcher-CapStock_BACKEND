@@ -657,6 +657,90 @@ stream, outside any LiveView; designed on Friday.
   every LiveView interaction goes to the single machine in `sjc`, which a far-away user feels
   on each click (should show up in the throttled click-to-confirmation metric).
 
+### Step F: React trading panel (backend `798bf3b`, React `b33c05c`), live
+**Design.** REST (`GET /api/portfolio`, `POST /api/orders {ticker, side, quantity}`) over a
+channel message: `api.js` already uses `fetch`, `/api` already has CORS and rate-limit plugs,
+errors map to HTTP status, and the bonus `claude -p` console can curl it. The one point for a
+channel: it reuses the open WebSocket, closer to LiveView, so REST adds a request per order to
+React's click latency. Record that with the metric instead of hiding it.
+
+**Where the price comes from (my explain-back).** I guessed telemetry; it's one step later.
+`save_price/2` inserts the row first, and only on `{:ok, _}` fires the telemetry event that
+leads to the `"stocks:live"` broadcast. React's prices come from `GET /api/stocks` (that table)
+plus those broadcasts, so the newest saved row is the newest price React can have shown:
+`StockFetcher.latest_price/1`. LiveView charges what its own process rendered
+(`socket.assigns.prices`); React's server can't know what the browser displayed, so it uses the
+source both were filled from. Neither trusts a client price (a test sends `price: 0.01`; it's
+ignored). Edge cases: a tick between reading and clicking fills at the newer price (same in
+LiveView); mock prices are never saved, so they can't be traded over the API.
+
+**Backend (agent-written except the error branch).** `TradingController`; `confirmation/1` and
+`format_cents/1` moved into `Trading` so both panels show identical text; 60/min rate limit;
+11 tests. Gotcha: a JSON POST from another origin sends an `OPTIONS` preflight first, and router
+pipelines (so `CORSPlug`) only run on a matched route, so it needed an `options "/orders"`
+route. The existing GETs never hit this because simple GETs skip the preflight.
+
+**My part: the `{:error, reason}` → 422 branch.**
+- `send_resp` sends a raw string; `json/2` encodes the map, sets the content type, then calls
+  `send_resp` itself. `put_status` only records the status on `conn`.
+- First try: `put_status(reason)` → `FunctionClauseError in Plug.Conn.Status.code/1`. It turns
+  status atoms into numbers with one clause per known name; `:insufficient_cash` isn't one. The
+  reason goes in the body, the status is 422 for all of them.
+- 422's atom is `:unprocessable_content` in Plug 1.20 (`:unprocessable_entity` is the pre-2022
+  name, still accepted). 83 tests, 0 failures.
+
+**React (agent-written, including `submitOrder` at my request).** `fetchPortfolio()`,
+`placeOrder()` (never throws: resolves `{ok, body}`, so the UI has the same two branches as
+`handle_event`), and `TradingPanel.jsx` mirroring the LiveView panel (same ids, dropdown,
+P/L from the existing price stream, order history). Checked with curl against the local backend
+(CORS from `localhost:5173`, buy, oversell) using a temporary price row, then cleaned up.
+
+**Deploys.** Backend to Fly (additive, no migrations), then the React build to GitHub Pages
+with `npx gh-pages -d dist --dotfiles` from `feat/trading-panel`, which isn't merged yet: still
+needs a PR to `main`. Order mattered: the SPA would have shown "Couldn't load the portfolio"
+without the backend endpoints. Tried it in the browser on the live SPA: it works.
+
+**Metrics so far (record predictions before the rest).** Production JS: React 359 KB
+(121 KB gzipped) vs LiveView 145 KB (44 KB gzipped; 56.7 KB brotli on the wire).
+
+### LiveView vs. React observations (step F)
+- Same feature, same backend rules, different frontends. My `handle_event` case and React's
+  `submitOrder` make the same decision: on success replace the portfolio and confirm, on error
+  change only the message. LiveView: `assign` returns a new socket, the server re-renders and
+  sends a diff. React: `setPortfolio` schedules a re-render in the browser from the JSON.
+- React needed things LiveView didn't: a JSON shape for every struct (built field by field so
+  nothing internal leaks), CORS plus a preflight route, an API module, and loading/error states
+  for the portfolio fetch. LiveView got the portfolio in `mount/3` with no API at all.
+- Order times are UTC in both panels (the LiveView server doesn't know the browser's timezone;
+  React matches it), while React's watchlist shows local time. Ask John if that matters.
+
+### Problem I found: after-hours orders filled at a stale price
+- Finnhub doesn't give after-hours prices, and after the close the Worker stops polling
+  altogether, so an order at 8 PM filled at the last price before 4:00 PM ET. Real brokers
+  reject or queue market orders when the market is closed (extended hours need limit orders
+  and a feed that covers them).
+- Options: (A) reject when closed, (B) queue to fill at the open (really a pending order, so
+  it fits step G), (C) after-hours prices from Alpaca IEX (the cut B2 poller; thin volume).
+  Chose A now; B can come with G.
+- My design answers: the check lives in `Trading` (one source of truth for both UIs), with
+  `now` injected for tests; mock orders are exempt (simulated prices, and the mock demo is
+  most useful after hours).
+- Built: `place_market_order/6` takes `source:` (`:live` default, `:mock`) and `now:`; new
+  error `:market_closed` ("Market is closed. Orders fill Mon-Fri, 9:30 AM-4:00 PM ET.");
+  `PricesLive` passes its source, the API is always live. A request or LiveView event can't
+  carry `now:`, so `config/test.exs` pins the test clock to a Wednesday 11:00 AM ET
+  (`:trading_fixed_now`, unset in dev/prod) and the closed-market tests override it. 6 tests.
+- Mine: `check_market_hours/2`, two clauses (`:mock` → `:ok`; `:live` → `:ok` or
+  `{:error, :market_closed}` from `MarketHours.market_open?(now)`). Learned: read the clock once
+  at the edge and pass the time down; inside the check, use the `now` argument, never
+  `DateTime.utc_now()`, or tests depend on when they run. `_now` marks an argument as
+  deliberately unused. An unknown source crashes with `FunctionClauseError`, which is what I
+  want for a bug in my own code. 89 tests, 0 failures.
+- Known limitation: `MarketHours` doesn't know holidays (it says "open" on Thanksgiving).
+- Ask John at the handover: is rejecting after-hours orders what he expects, or does he trade
+  extended hours and want queued orders (B)?
+
 ### Next
-- React panel (F), then limit/stop orders (G).
-- Book the Saturday Nov 7 handover with John.
+- Open the PR `feat/trading-panel` → `main` in `CapStock_FrontEnd`.
+- Limit/stop orders (G): design the process first.
+- Book the Saturday Nov 7 handover with John; decide whether to reset the demo portfolio first.

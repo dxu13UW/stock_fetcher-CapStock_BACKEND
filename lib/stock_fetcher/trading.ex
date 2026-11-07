@@ -15,10 +15,14 @@ defmodule StockFetcher.Trading do
     * Concurrent orders on one portfolio are safe: the first statement of each transaction is
       a conditional `UPDATE` (`... WHERE cash_cents >= total`), so the check and the change
       happen in one atomic step, and SQLite's single writer serializes the rest.
+    * Live orders only fill while the market is open (`MarketHours.market_open?/1`). After
+      hours the Worker stops polling, so the newest price is the last one before the close and
+      filling at it would be trading on a stale price. Mock orders are exempt: mock prices are
+      simulated and always moving, and the mock demo is most useful after hours.
   """
   import Ecto.Query
 
-  alias StockFetcher.Repo
+  alias StockFetcher.{MarketHours, Repo}
   alias StockFetcher.Trading.{Order, Portfolio, Position}
 
   # Assumptions until John answers questions 1 and 3 (PLAN.md section 2): one shared demo
@@ -34,6 +38,7 @@ defmodule StockFetcher.Trading do
           | :portfolio_not_found
           | :insufficient_cash
           | :insufficient_shares
+          | :market_closed
 
   def starting_cash_cents, do: @starting_cash_cents
 
@@ -68,15 +73,24 @@ defmodule StockFetcher.Trading do
   form or JSON body. `price` is the latest known price in dollars (float, integer, or
   `Decimal`), or `nil` if the ticker has no price.
 
+  Options:
+    * `:source` - `:live` (default) or `:mock`. Live orders are rejected with
+      `:market_closed` outside market hours; mock orders are not.
+    * `:now` - the current time, for tests (default: `now/0`).
+
   Returns `{:ok, %{order: order, portfolio: portfolio}}` (portfolio reloaded with positions) or
   `{:error, reason}`; see `error_message/1` for user-facing text.
   """
-  @spec place_market_order(integer(), term(), term(), term(), term()) ::
+  @spec place_market_order(integer(), term(), term(), term(), term(), keyword()) ::
           {:ok, %{order: Order.t(), portfolio: Portfolio.t()}} | {:error, error()}
-  def place_market_order(portfolio_id, side, ticker, quantity, price) do
+  def place_market_order(portfolio_id, side, ticker, quantity, price, opts \\ []) do
+    source = Keyword.get(opts, :source, :live)
+    now = Keyword.get_lazy(opts, :now, &now/0)
+
     with {:ok, side} <- normalize_side(side),
          {:ok, ticker} <- normalize_ticker(ticker),
          {:ok, quantity} <- normalize_quantity(quantity),
+         :ok <- check_market_hours(source, now),
          {:ok, price_cents} <- to_cents(price),
          {:ok, order} <-
            Repo.transaction(fn -> fill(side, portfolio_id, ticker, quantity, price_cents) end) do
@@ -92,6 +106,9 @@ defmodule StockFetcher.Trading do
   def error_message(:invalid_side), do: "Side must be buy or sell."
   def error_message(:invalid_price), do: "No valid price for this ticker."
   def error_message(:portfolio_not_found), do: "Portfolio not found."
+
+  def error_message(:market_closed),
+    do: "Market is closed. Orders fill Mon-Fri, 9:30 AM-4:00 PM ET."
 
   @doc """
   Confirmation text for a filled order, e.g. "Bought 3 AAPL at $190.00 ($570.00)".
@@ -114,6 +131,24 @@ defmodule StockFetcher.Trading do
     pennies = cents |> abs() |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")
     "#{sign}$#{dollars}.#{pennies}"
   end
+
+  # --- Market hours ---
+
+  # Live prices stop updating after the close, so live orders only fill while the market
+  # is open.
+  defp check_market_hours(:mock, _now), do: :ok
+
+  defp check_market_hours(:live, now) do
+    if MarketHours.market_open?(now) do
+      :ok
+    else
+      {:error, :market_closed}
+    end
+  end
+
+  # The real clock, unless config/test.exs pins one (`:trading_fixed_now`) so tests that place
+  # orders don't fail when run after hours. Unset in dev and prod.
+  defp now, do: Application.get_env(:stock_fetcher, :trading_fixed_now) || DateTime.utc_now()
 
   # --- Fills (run inside Repo.transaction/1) ---
 

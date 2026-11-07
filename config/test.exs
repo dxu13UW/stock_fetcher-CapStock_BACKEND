@@ -15,3 +15,7 @@ config :stock_fetcher, StockFetcherWeb.Endpoint,
 config :stock_fetcher, :req_options,
   plug: {Req.Test, StockFetcher},
   retry: false
+
+# Trading rejects live orders outside market hours. Pin the clock to a Wednesday, 11:00 AM ET,
+# so order tests pass whenever they run; tests for the closed market pass `now:` or override it.
+config :stock_fetcher, :trading_fixed_now, ~U[2026-11-04 16:00:00Z]

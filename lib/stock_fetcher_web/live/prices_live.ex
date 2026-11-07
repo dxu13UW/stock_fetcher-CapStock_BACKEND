@@ -73,7 +73,9 @@ defmodule StockFetcherWeb.PricesLive do
     price = get_in(socket.assigns.prices, [ticker, :price])
 
     result =
-      Trading.place_market_order(socket.assigns.portfolio.id, side, ticker, quantity, price)
+      Trading.place_market_order(socket.assigns.portfolio.id, side, ticker, quantity, price,
+        source: socket.assigns.source
+      )
 
     case result do
       {:ok, %{order: order, portfolio: portfolio}} ->

@@ -130,10 +130,50 @@ defmodule StockFetcher.TradingTest do
             :invalid_quantity,
             :invalid_side,
             :invalid_price,
-            :portfolio_not_found
+            :portfolio_not_found,
+            :market_closed
           ] do
         assert is_binary(Trading.error_message(reason))
       end
+    end
+  end
+
+  describe "place_market_order/6 market hours" do
+    # 2026-11-04 is a Wednesday; Eastern time is UTC-5 in November.
+    @open ~U[2026-11-04 16:00:00Z]
+    @after_close ~U[2026-11-04 21:30:00Z]
+    @saturday ~U[2026-11-07 16:00:00Z]
+
+    test "live orders fill while the market is open", %{portfolio: p} do
+      assert {:ok, _} = Trading.place_market_order(p.id, "buy", "AAPL", 1, 100.0, now: @open)
+    end
+
+    test "live orders are rejected after the close and on weekends", %{portfolio: p} do
+      for now <- [@after_close, @saturday] do
+        assert {:error, :market_closed} =
+                 Trading.place_market_order(p.id, "buy", "AAPL", 1, 100.0, now: now)
+      end
+
+      assert Trading.get_portfolio!(p.id).cash_cents == Trading.starting_cash_cents()
+    end
+
+    test "source defaults to live", %{portfolio: p} do
+      assert {:error, :market_closed} =
+               Trading.place_market_order(p.id, "buy", "AAPL", 1, 100.0, now: @saturday)
+
+      assert {:error, :market_closed} =
+               Trading.place_market_order(p.id, "buy", "AAPL", 1, 100.0,
+                 source: :live,
+                 now: @saturday
+               )
+    end
+
+    test "mock orders fill at any time", %{portfolio: p} do
+      assert {:ok, _} =
+               Trading.place_market_order(p.id, "buy", "AAPL", 1, 100.0,
+                 source: :mock,
+                 now: @saturday
+               )
     end
   end
 

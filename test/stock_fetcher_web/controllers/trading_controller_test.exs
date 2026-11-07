@@ -9,6 +9,14 @@ defmodule StockFetcherWeb.TradingControllerTest do
 
   defp post_order(conn, body), do: post(conn, ~p"/api/orders", body)
 
+  # The request can't carry `now:`, so override the test clock from config/test.exs for one
+  # test. Safe because this module is async: false.
+  defp pin_clock(now) do
+    previous = Application.get_env(:stock_fetcher, :trading_fixed_now)
+    Application.put_env(:stock_fetcher, :trading_fixed_now, now)
+    on_exit(fn -> Application.put_env(:stock_fetcher, :trading_fixed_now, previous) end)
+  end
+
   describe "GET /api/portfolio" do
     test "starts with the demo cash, no positions and no orders", %{conn: conn} do
       body = conn |> get(~p"/api/portfolio") |> json_response(200)
@@ -127,6 +135,19 @@ defmodule StockFetcherWeb.TradingControllerTest do
                build_conn()
                |> post_order(%{ticker: "ZZAPI", side: "short", quantity: 1})
                |> json_response(422)
+    end
+
+    test "market closed (the API always trades live prices)", %{conn: conn} do
+      save_price("ZZAPI", 10.0)
+      pin_clock(~U[2026-11-07 16:00:00Z])
+
+      body =
+        conn |> post_order(%{ticker: "ZZAPI", side: "buy", quantity: 1}) |> json_response(422)
+
+      assert body == %{
+               "error" => "market_closed",
+               "message" => Trading.error_message(:market_closed)
+             }
     end
 
     test "a failed order changes nothing", %{conn: conn} do

@@ -5,6 +5,8 @@ defmodule StockFetcherWeb.PricesLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias StockFetcher.Trading
+
   # The price topics are global, so another test's broadcast could reach these LiveViews.
   # Each test uses a ZZ* ticker no other test uses and only asserts on it.
 
@@ -110,6 +112,28 @@ defmodule StockFetcherWeb.PricesLiveTest do
 
       assert has_element?(view, "#order-message", "Unknown ticker: no price available.")
     end
+
+    test "after hours, live orders are rejected but mock orders still fill", %{conn: conn} do
+      pin_clock(~U[2026-11-07 16:00:00Z])
+
+      {:ok, live_view, _html} = live(conn, ~p"/prices")
+      broadcast_price("ZZLIVE", 10.0)
+      assert has_element?(live_view, "#price-ZZLIVE")
+      submit_order(live_view, "ZZLIVE", "1", "buy")
+      assert has_element?(live_view, "#order-message", Trading.error_message(:market_closed))
+      refute has_element?(live_view, "#position-ZZLIVE")
+
+      mock_view = mock_view_with_price(build_conn(), "ZZMOCK", 10.0)
+      submit_order(mock_view, "ZZMOCK", "1", "buy")
+      assert has_element?(mock_view, "#order-message", "Bought 1 ZZMOCK at $10.00 ($10.00)")
+    end
+  end
+
+  # Overrides the test clock from config/test.exs for one test (this module is async: false).
+  defp pin_clock(now) do
+    previous = Application.get_env(:stock_fetcher, :trading_fixed_now)
+    Application.put_env(:stock_fetcher, :trading_fixed_now, now)
+    on_exit(fn -> Application.put_env(:stock_fetcher, :trading_fixed_now, previous) end)
   end
 
   defp mock_view_with_price(conn, ticker, price) do
