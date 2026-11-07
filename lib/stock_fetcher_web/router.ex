@@ -49,6 +49,16 @@ defmodule StockFetcherWeb.Router do
       message: "Too many interactive zoom requests. Please slow down."
   end
 
+  # Orders write to the DB; 60/min per IP is far above a human clicking Buy.
+  pipeline :trading_protected do
+    plug StockFetcherWeb.Plugs.HydrationLimiter,
+      limit: 60,
+      scale_ms: 60_000,
+      key_prefix: "trade",
+      error: "Trading rate limit exceeded.",
+      message: "Too many trading requests. Please slow down."
+  end
+
   scope "/", StockFetcherWeb do
     pipe_through :browser
 
@@ -70,6 +80,17 @@ defmodule StockFetcherWeb.Router do
     scope "/" do
       pipe_through :interactive_protected
       get "/stocks/:ticker/intraday", StockController, :intraday
+    end
+
+    # Paper trading for the React panel (step F).
+    scope "/" do
+      pipe_through :trading_protected
+      get "/portfolio", TradingController, :portfolio
+      post "/orders", TradingController, :create_order
+      # A JSON POST from another origin makes the browser send an OPTIONS "preflight" first.
+      # Router pipelines only run on a matched route, so without this OPTIONS route the
+      # preflight 404s before CORSPlug can answer it. CORSPlug halts, so no action runs.
+      options "/orders", TradingController, :options
     end
   end
 end

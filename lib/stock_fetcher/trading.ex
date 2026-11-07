@@ -93,6 +93,28 @@ defmodule StockFetcher.Trading do
   def error_message(:invalid_price), do: "No valid price for this ticker."
   def error_message(:portfolio_not_found), do: "Portfolio not found."
 
+  @doc """
+  Confirmation text for a filled order, e.g. "Bought 3 AAPL at $190.00 ($570.00)".
+  Lives here, not in a UI, so the LiveView and React panels show the same text (benchmark spec).
+  """
+  @spec confirmation(Order.t()) :: String.t()
+  def confirmation(%Order{} = order) do
+    verb = if order.side == "buy", do: "Bought", else: "Sold"
+
+    "#{verb} #{order.quantity} #{order.ticker} at #{format_cents(order.price_cents)} " <>
+      "(#{format_cents(order.total_cents)})"
+  end
+
+  @doc ~S'Formats integer cents as dollars: 1234567 -> "$12,345.67", -500 -> "-$5.00".'
+  @spec format_cents(integer()) :: String.t()
+  def format_cents(cents) when is_integer(cents) do
+    sign = if cents < 0, do: "-", else: ""
+    dollars = cents |> abs() |> div(100) |> Integer.to_string()
+    dollars = Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, dollars, ",")
+    pennies = cents |> abs() |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")
+    "#{sign}$#{dollars}.#{pennies}"
+  end
+
   # --- Fills (run inside Repo.transaction/1) ---
 
   # One clause per side instead of a `case`, which keeps place_market_order/5 shallow.

@@ -224,12 +224,8 @@ defmodule StockFetcherWeb.PricesLive do
   end
 
   # Confirmation text for a filled order, e.g. "Bought 10 AAPL at $189.57 ($1,895.70)".
-  defp confirmation(order) do
-    verb = if order.side == "buy", do: "Bought", else: "Sold"
-
-    "#{verb} #{order.quantity} #{order.ticker} at #{format_cents(order.price_cents)} " <>
-      "(#{format_cents(order.total_cents)})"
-  end
+  # Shared with the React API so both panels show the same text.
+  defp confirmation(order), do: Trading.confirmation(order)
 
   # Current price and unrealized P/L for a position, from the live prices on this page.
   # "–" when the ticker has no price yet (e.g. the mock stream just started).
@@ -256,13 +252,7 @@ defmodule StockFetcherWeb.PricesLive do
   end
 
   # Integer cents -> "$1,234.56" (or "-$1,234.56").
-  defp format_cents(cents) do
-    sign = if cents < 0, do: "-", else: ""
-    dollars = cents |> abs() |> div(100) |> Integer.to_string()
-    dollars = Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, dollars, ",")
-    pennies = cents |> abs() |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")
-    "#{sign}$#{dollars}.#{pennies}"
-  end
+  defp format_cents(cents), do: Trading.format_cents(cents)
 
   defp format_signed_cents(cents) when cents > 0, do: "+" <> format_cents(cents)
   defp format_signed_cents(cents), do: format_cents(cents)
