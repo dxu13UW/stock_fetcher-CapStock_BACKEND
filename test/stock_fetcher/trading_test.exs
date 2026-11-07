@@ -4,7 +4,7 @@ defmodule StockFetcher.TradingTest do
   use ExUnit.Case, async: false
 
   alias StockFetcher.{Repo, Trading}
-  alias StockFetcher.Trading.{Order, Portfolio}
+  alias StockFetcher.Trading.{Order, PendingOrder, Portfolio}
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -131,7 +131,10 @@ defmodule StockFetcher.TradingTest do
             :invalid_side,
             :invalid_price,
             :portfolio_not_found,
-            :market_closed
+            :market_closed,
+            :invalid_limit,
+            :invalid_stop,
+            :not_open
           ] do
         assert is_binary(Trading.error_message(reason))
       end
@@ -174,6 +177,150 @@ defmodule StockFetcher.TradingTest do
                  source: :mock,
                  now: @saturday
                )
+    end
+  end
+
+  describe "demo_portfolio/1" do
+    test "mock trades get their own portfolio", %{portfolio: live} do
+      mock = Trading.demo_portfolio(:mock)
+
+      assert mock.id != live.id
+      assert mock.cash_cents == Trading.starting_cash_cents()
+      assert Trading.demo_portfolio(:live).id == live.id
+    end
+  end
+
+  describe "fill_rule/2" do
+    test "limit buy fills only when the price trades below the limit, at the limit" do
+      limit = %PendingOrder{type: "limit", side: "buy", trigger_cents: 19_000}
+
+      assert Trading.fill_rule(limit, 19_100) == :wait
+      assert Trading.fill_rule(limit, 19_000) == :wait
+      assert Trading.fill_rule(limit, 18_999) == {:fill, 19_000}
+      assert Trading.fill_rule(limit, 17_000) == {:fill, 19_000}
+    end
+
+    test "stop sell fills at or below the stop, at the tick price (gaps included)" do
+      stop = %PendingOrder{type: "stop", side: "sell", trigger_cents: 17_700}
+
+      assert Trading.fill_rule(stop, 17_701) == :wait
+      assert Trading.fill_rule(stop, 17_700) == {:fill, 17_700}
+      assert Trading.fill_rule(stop, 16_500) == {:fill, 16_500}
+    end
+  end
+
+  describe "place_limit_order/6" do
+    test "rests when the price is above the limit", %{portfolio: p} do
+      assert {:ok, :placed, pending} =
+               Trading.place_limit_order(p.id, "aapl", 3, "190.00", "177", current_price: 195.0)
+
+      assert %PendingOrder{
+               ticker: "AAPL",
+               type: "limit",
+               side: "buy",
+               quantity: 3,
+               trigger_cents: 19_000,
+               stop_cents: 17_700,
+               source: "live",
+               status: "open"
+             } = pending
+
+      assert Trading.list_pending_orders(p.id) |> Enum.map(& &1.id) == [pending.id]
+      assert Trading.get_portfolio!(p.id).cash_cents == Trading.starting_cash_cents()
+    end
+
+    test "rests when there's no price or the market is closed", %{portfolio: p} do
+      assert {:ok, :placed, _} = Trading.place_limit_order(p.id, "AAPL", 1, 190, nil)
+
+      assert {:ok, :placed, _} =
+               Trading.place_limit_order(p.id, "AAPL", 1, 190, nil,
+                 current_price: 180.0,
+                 now: ~U[2026-11-07 16:00:00Z]
+               )
+    end
+
+    test "fills now at the current price when already below the limit", %{portfolio: p} do
+      assert {:ok, :filled, %{order: order, pending: pending, stop: stop}} =
+               Trading.place_limit_order(p.id, "AAPL", 2, 190, 177, current_price: 185.0)
+
+      assert order.price_cents == 18_500
+      assert pending.status == "filled" and pending.order_id == order.id
+
+      assert %PendingOrder{type: "stop", side: "sell", trigger_cents: 17_700, status: "open"} =
+               stop
+
+      assert stop.parent_id == pending.id
+    end
+
+    test "validates limit and stop", %{portfolio: p} do
+      assert {:error, :invalid_limit} = Trading.place_limit_order(p.id, "AAPL", 1, "", nil)
+      assert {:error, :invalid_limit} = Trading.place_limit_order(p.id, "AAPL", 1, "abc", nil)
+      assert {:error, :invalid_limit} = Trading.place_limit_order(p.id, "AAPL", 1, 0, nil)
+      assert {:error, :invalid_stop} = Trading.place_limit_order(p.id, "AAPL", 1, 190, 190)
+      assert {:error, :invalid_stop} = Trading.place_limit_order(p.id, "AAPL", 1, 190, "-1")
+      assert {:error, :invalid_quantity} = Trading.place_limit_order(p.id, "AAPL", 0, 190, nil)
+      assert Trading.list_pending_orders(p.id) == []
+    end
+  end
+
+  describe "fill_pending_order/2 and cancel_pending_order/2" do
+    setup %{portfolio: p} do
+      {:ok, :placed, pending} = Trading.place_limit_order(p.id, "AAPL", 10, 100, 90)
+      %{pending: pending}
+    end
+
+    test "a fill buys, records the order and opens the stop-loss", %{
+      portfolio: p,
+      pending: pending
+    } do
+      assert {:ok, %{order: order, stop: stop}} = Trading.fill_pending_order(pending.id, 10_000)
+
+      assert order.side == "buy" and order.quantity == 10 and order.price_cents == 10_000
+      assert Trading.get_portfolio!(p.id).cash_cents == Trading.starting_cash_cents() - 100_000
+      assert Trading.list_pending_orders(p.id) |> Enum.map(& &1.id) == [stop.id]
+
+      # The stop-loss closes the position at its fill price.
+      assert {:ok, %{order: sold, stop: nil}} = Trading.fill_pending_order(stop.id, 8_800)
+      assert sold.side == "sell" and sold.price_cents == 8_800
+      assert Trading.get_portfolio!(p.id).positions == []
+    end
+
+    test "cancel, then fill: the fill changes nothing", %{portfolio: p, pending: pending} do
+      assert {:ok, %PendingOrder{status: "cancelled"}} =
+               Trading.cancel_pending_order(p.id, "#{pending.id}")
+
+      assert {:error, :not_open} = Trading.fill_pending_order(pending.id, 9_900)
+      assert Trading.get_portfolio!(p.id).cash_cents == Trading.starting_cash_cents()
+      assert Repo.aggregate(Order, :count) == 0
+    end
+
+    test "fill, then cancel: the cancel is refused", %{portfolio: p, pending: pending} do
+      {:ok, _} = Trading.fill_pending_order(pending.id, 9_900)
+      assert {:error, :not_open} = Trading.cancel_pending_order(p.id, pending.id)
+    end
+
+    test "only the owning portfolio can cancel", %{pending: pending} do
+      other = Trading.demo_portfolio(:mock)
+      assert {:error, :not_open} = Trading.cancel_pending_order(other.id, pending.id)
+      assert {:error, :not_open} = Trading.cancel_pending_order(other.id, "nope")
+    end
+
+    test "a fill it can't afford is rejected, not retried", %{portfolio: p} do
+      {:ok, :placed, big} = Trading.place_limit_order(p.id, "AAPL", 1, 1_000_000, nil)
+
+      assert {:error, :insufficient_cash} = Trading.fill_pending_order(big.id, 100_000_000)
+
+      assert %PendingOrder{status: "rejected", reject_reason: "insufficient_cash"} =
+               Repo.get!(PendingOrder, big.id)
+    end
+
+    test "list_open_orders/2 is per source and ticker", %{pending: pending} do
+      mock = Trading.demo_portfolio(:mock)
+      {:ok, :placed, _} = Trading.place_limit_order(mock.id, "AAPL", 1, 100, nil, source: :mock)
+
+      assert Trading.list_open_orders("live", "AAPL") |> Enum.map(& &1.id) == [pending.id]
+      assert Trading.list_open_orders("live", "MSFT") == []
+      assert [%PendingOrder{source: "mock"}] = Trading.list_open_orders("mock", "AAPL")
     end
   end
 

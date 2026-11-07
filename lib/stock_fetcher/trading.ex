@@ -23,11 +23,13 @@ defmodule StockFetcher.Trading do
   import Ecto.Query
 
   alias StockFetcher.{MarketHours, Repo}
-  alias StockFetcher.Trading.{Order, Portfolio, Position}
+  alias StockFetcher.Trading.{Order, PendingOrder, Portfolio, Position}
 
   # Assumptions until John answers questions 1 and 3 (PLAN.md section 2): one shared demo
   # portfolio, $100,000 starting cash (his example position was $60,000).
-  @demo_name "demo"
+  # One demo portfolio per price source, so mock trades (made-up prices on the same tickers)
+  # never mix with positions bought at real prices.
+  @demo_names %{live: "demo", mock: "demo-mock"}
   @starting_cash_cents 10_000_000
 
   @type error ::
@@ -39,18 +41,27 @@ defmodule StockFetcher.Trading do
           | :insufficient_cash
           | :insufficient_shares
           | :market_closed
+          | :invalid_limit
+          | :invalid_stop
+          | :not_open
 
   def starting_cash_cents, do: @starting_cash_cents
 
-  @doc "Returns the shared demo portfolio (with positions), creating it on first use."
-  def demo_portfolio do
+  @doc """
+  Returns the demo portfolio for a price source (with positions), creating it on first use.
+  `:live` (default) is the real-price portfolio; `:mock` is a separate sandbox for the mock
+  stream.
+  """
+  def demo_portfolio(source \\ :live) do
+    name = Map.fetch!(@demo_names, source)
+
     # on_conflict: :nothing makes concurrent first calls safe: only one row is ever created.
-    Repo.insert!(%Portfolio{name: @demo_name, cash_cents: @starting_cash_cents},
+    Repo.insert!(%Portfolio{name: name, cash_cents: @starting_cash_cents},
       on_conflict: :nothing,
       conflict_target: :name
     )
 
-    Portfolio |> Repo.get_by!(name: @demo_name) |> Repo.preload(:positions)
+    Portfolio |> Repo.get_by!(name: name) |> Repo.preload(:positions)
   end
 
   @doc "Fetches a portfolio with its positions (sorted by ticker). Raises if it doesn't exist."
@@ -110,6 +121,157 @@ defmodule StockFetcher.Trading do
   def error_message(:market_closed),
     do: "Market is closed. Orders fill Mon-Fri, 9:30 AM-4:00 PM ET."
 
+  def error_message(:invalid_limit), do: "Limit price must be a number greater than 0."
+
+  def error_message(:invalid_stop),
+    do: "Stop price must be greater than 0 and below the limit price."
+
+  def error_message(:not_open), do: "This order is no longer open (it may have just filled)."
+
+  # --- Resting orders (step G): limit buy entries and their stop-losses ---
+
+  @doc """
+  Decides whether a resting order fills at a tick price (integer cents), and at what price.
+  Strict on purpose, so paper results don't flatter John (LOG.md 2026-11-06):
+
+    * limit buy: only when the price trades *through* the limit (strictly below it), filled
+      at the limit price. A touch isn't enough: in a real market other orders at that price
+      may be ahead in the queue.
+    * stop sell: when the price is at or below the stop, filled at that tick's price, which
+      can be worse than the stop if the price gapped between ticks.
+
+  Returns `{:fill, price_cents}` or `:wait`.
+  """
+  @spec fill_rule(PendingOrder.t(), integer()) :: {:fill, integer()} | :wait
+
+  def fill_rule(%PendingOrder{type: "limit", trigger_cents: limit}, price_cents)
+      when price_cents < limit do
+    {:fill, limit}
+  end
+
+  def fill_rule(%PendingOrder{type: "stop", trigger_cents: stop}, price_cents)
+      when price_cents <= stop do
+    {:fill, price_cents}
+  end
+
+  def fill_rule(%PendingOrder{}, _price_cents), do: :wait
+
+  @doc """
+  Places a limit buy entry, with an optional stop-loss created when it fills.
+
+  `limit_price`/`stop_price` may be numbers or strings from a form (`stop_price` blank or nil
+  for no stop). Options:
+    * `:source` - `:live` (default) or `:mock`: which price stream may trigger it.
+    * `:current_price` - the latest price the user saw (dollars). If it's already below the
+      limit and the market is open, the order fills now at that price, as a real exchange
+      would: there's a seller below the limit right now.
+    * `:now` - the current time, for tests.
+
+  Returns `{:ok, :placed, pending}`, `{:ok, :filled, fill}` (see `fill_pending_order/2`), or
+  `{:error, reason}`.
+  """
+  def place_limit_order(portfolio_id, ticker, quantity, limit_price, stop_price, opts \\ []) do
+    source = Keyword.get(opts, :source, :live)
+    now = Keyword.get_lazy(opts, :now, &now/0)
+
+    with {:ok, ticker} <- normalize_ticker(ticker),
+         {:ok, quantity} <- normalize_quantity(quantity),
+         {:ok, limit_cents} <- input_cents(limit_price, :invalid_limit),
+         {:ok, stop_cents} <- stop_cents(stop_price, limit_cents),
+         {:ok, pending} <-
+           insert_pending(%PendingOrder{
+             portfolio_id: portfolio_id,
+             source: Atom.to_string(source),
+             ticker: ticker,
+             type: "limit",
+             side: "buy",
+             quantity: quantity,
+             trigger_cents: limit_cents,
+             stop_cents: stop_cents
+           }) do
+      maybe_fill_now(pending, Keyword.get(opts, :current_price), source, now)
+    end
+  end
+
+  @doc """
+  Fills an open resting order at `fill_cents`, in one transaction:
+  claims it (`open` -> `filled`, conditional), moves cash and shares through the same code as
+  market orders, and, for a limit entry with a stop, creates the open stop-loss sell.
+
+  Returns `{:ok, %{order: order, pending: pending, stop: stop_or_nil}}`,
+  `{:error, :not_open}` if it was already cancelled or filled, or `{:error, reason}` if the
+  fill failed (e.g. `:insufficient_cash`), in which case the order is marked "rejected".
+  """
+  def fill_pending_order(pending_id, fill_cents) when is_integer(fill_cents) and fill_cents > 0 do
+    result =
+      Repo.transaction(fn ->
+        # First statement: the conditional claim. Whichever of cancel and fill runs first wins;
+        # the other matches 0 rows (same pattern as buy/5's cash check).
+        pending = claim!(pending_id)
+
+        order =
+          fill(pending.side, pending.portfolio_id, pending.ticker, pending.quantity, fill_cents)
+
+        pending = pending |> Ecto.Changeset.change(order_id: order.id) |> Repo.update!()
+        %{order: order, pending: pending, stop: maybe_insert_stop(pending)}
+      end)
+
+    case result do
+      {:error, reason} when reason in [:insufficient_cash, :insufficient_shares] ->
+        reject(pending_id, reason)
+        {:error, reason}
+
+      other ->
+        other
+    end
+  end
+
+  @doc "Cancels an open resting order of this portfolio. `{:error, :not_open}` if it isn't open."
+  def cancel_pending_order(portfolio_id, pending_id) do
+    with {:ok, id} <- to_id(pending_id),
+         {1, _} <-
+           from(p in PendingOrder,
+             where: p.id == ^id and p.portfolio_id == ^portfolio_id and p.status == "open"
+           )
+           |> Repo.update_all(set: [status: "cancelled", updated_at: utc_now()]) do
+      {:ok, Repo.get!(PendingOrder, id)}
+    else
+      _ -> {:error, :not_open}
+    end
+  end
+
+  @doc "Open resting orders that a tick for `ticker` from `source` (\"live\"/\"mock\") could fill."
+  def list_open_orders(source, ticker) do
+    Repo.all(
+      from(p in PendingOrder,
+        where: p.source == ^source and p.ticker == ^ticker and p.status == "open",
+        order_by: p.id
+      )
+    )
+  end
+
+  @doc "A portfolio's open resting orders, newest first."
+  def list_pending_orders(portfolio_id) do
+    Repo.all(
+      from(p in PendingOrder,
+        where: p.portfolio_id == ^portfolio_id and p.status == "open",
+        order_by: [desc: p.id]
+      )
+    )
+  end
+
+  @doc ~S'Short description, e.g. "limit buy 3 AAPL at $190.00, stop $177.00".'
+  def describe(%PendingOrder{type: "limit"} = p) do
+    stop = if p.stop_cents, do: ", stop #{format_cents(p.stop_cents)}", else: ""
+    "limit buy #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}#{stop}"
+  end
+
+  def describe(%PendingOrder{type: "stop"} = p),
+    do: "stop-loss sell #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}"
+
+  @doc "PubSub topic for a portfolio's resting-order events (OrderWatcher -> PricesLive)."
+  def portfolio_topic(portfolio_id), do: "portfolio:#{portfolio_id}"
+
   @doc """
   Confirmation text for a filled order, e.g. "Bought 3 AAPL at $190.00 ($570.00)".
   Lives here, not in a UI, so the LiveView and React panels show the same text (benchmark spec).
@@ -149,6 +311,94 @@ defmodule StockFetcher.Trading do
   # The real clock, unless config/test.exs pins one (`:trading_fixed_now`) so tests that place
   # orders don't fail when run after hours. Unset in dev and prod.
   defp now, do: Application.get_env(:stock_fetcher, :trading_fixed_now) || DateTime.utc_now()
+
+  # --- Resting-order internals ---
+
+  defp insert_pending(%PendingOrder{} = pending), do: {:ok, Repo.insert!(pending)}
+
+  # Already marketable and the market is open: fill now at the price the user saw.
+  defp maybe_fill_now(pending, current_price, source, now) do
+    with {:ok, current_cents} <- to_cents(current_price),
+         true <- current_cents < pending.trigger_cents,
+         :ok <- check_market_hours(source, now) do
+      case fill_pending_order(pending.id, current_cents) do
+        {:ok, fill} -> {:ok, :filled, fill}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      _ -> {:ok, :placed, pending}
+    end
+  end
+
+  defp claim!(id) do
+    {claimed, _} =
+      from(p in PendingOrder, where: p.id == ^id and p.status == "open")
+      |> Repo.update_all(set: [status: "filled", updated_at: utc_now()])
+
+    if claimed == 0, do: Repo.rollback(:not_open)
+    Repo.get!(PendingOrder, id)
+  end
+
+  defp maybe_insert_stop(%PendingOrder{type: "limit", stop_cents: stop} = entry)
+       when is_integer(stop) do
+    Repo.insert!(%PendingOrder{
+      portfolio_id: entry.portfolio_id,
+      source: entry.source,
+      ticker: entry.ticker,
+      type: "stop",
+      side: "sell",
+      quantity: entry.quantity,
+      trigger_cents: stop,
+      parent_id: entry.id
+    })
+  end
+
+  defp maybe_insert_stop(_), do: nil
+
+  # Conditional too: if it was cancelled meanwhile, it stays cancelled.
+  defp reject(id, reason) do
+    from(p in PendingOrder, where: p.id == ^id and p.status == "open")
+    |> Repo.update_all(
+      set: [status: "rejected", reject_reason: Atom.to_string(reason), updated_at: utc_now()]
+    )
+  end
+
+  defp stop_cents(blank, _limit_cents) when blank in [nil, ""], do: {:ok, nil}
+
+  defp stop_cents(stop_price, limit_cents) do
+    case input_cents(stop_price, :invalid_stop) do
+      {:ok, stop} when stop < limit_cents -> {:ok, stop}
+      _ -> {:error, :invalid_stop}
+    end
+  end
+
+  # Prices typed into a form arrive as strings ("190.5"); numbers come from code and tests.
+  defp input_cents(value, error) when is_binary(value) do
+    case value |> String.trim() |> Decimal.parse() do
+      {decimal, ""} -> input_cents(decimal, error)
+      _ -> {:error, error}
+    end
+  end
+
+  defp input_cents(value, error) do
+    case to_cents(value) do
+      {:ok, cents} -> {:ok, cents}
+      {:error, _} -> {:error, error}
+    end
+  end
+
+  defp to_id(id) when is_integer(id), do: {:ok, id}
+
+  defp to_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {n, ""} -> {:ok, n}
+      _ -> :error
+    end
+  end
+
+  defp to_id(_), do: :error
+
+  defp utc_now, do: DateTime.utc_now() |> DateTime.truncate(:second)
 
   # --- Fills (run inside Repo.transaction/1) ---
 

@@ -27,17 +27,32 @@ defmodule StockFetcherWeb.PricesLive do
   def mount(params, _session, socket) do
     source = if params["source"] == "mock", do: :mock, else: :live
 
-    if connected?(socket),
-      do: Phoenix.PubSub.subscribe(StockFetcher.PubSub, topic(source))
+    # Mock trades go to their own portfolio, so made-up prices never touch real positions.
+    portfolio = Trading.demo_portfolio(source)
 
-    portfolio = Trading.demo_portfolio()
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(StockFetcher.PubSub, topic(source))
+      # OrderWatcher reports resting-order fills here, even ones placed from another tab.
+      Phoenix.PubSub.subscribe(StockFetcher.PubSub, Trading.portfolio_topic(portfolio.id))
+    end
+
+    prices = initial_prices(source)
 
     {:ok,
      assign(socket,
        source: source,
-       prices: initial_prices(source),
+       prices: prices,
+       # Its own assign, so a price tick doesn't re-send the dropdown options (only a new ticker
+       # does). Re-rendering a <select> closes it and resets the choice.
+       tickers: prices |> Map.keys() |> Enum.sort(),
+       # What the user has typed/selected, kept on the server via phx-change. LiveView only
+       # protects the focused input from re-renders; without this, every tick would reset the
+       # other fields to the rendered defaults.
+       order_form: %{"ticker" => nil, "quantity" => "1"},
+       limit_form: %{"ticker" => nil, "quantity" => "1", "limit" => "", "stop" => ""},
        portfolio: portfolio,
        orders: Trading.list_orders(portfolio.id),
+       pending: Trading.list_pending_orders(portfolio.id),
        # nil, or {:ok, text} / {:error, text} from the last order
        message: nil
      )}
@@ -57,13 +72,24 @@ defmodule StockFetcherWeb.PricesLive do
 
   # Every price broadcast on the subscribed topic (TelemetryHandler or Mock.Streamer) lands
   # here. Map.take drops the payload's `id`, so entries match the mount shape exactly.
-  # "new_price" is the only message on this topic; anything else would crash this process,
-  # which is the right signal that the payload contract changed.
+  # Any other message on the price topic would crash this process, which is the right signal
+  # that the payload contract changed.
   @impl true
   def handle_info({"new_price", payload}, socket) do
     price = Map.take(payload, [:ticker, :price, :timestamp])
+    socket = update(socket, :prices, &Map.put(&1, price.ticker, price))
 
-    {:noreply, update(socket, :prices, &Map.put(&1, price.ticker, price))}
+    socket =
+      if price.ticker in socket.assigns.tickers,
+        do: socket,
+        else: update(socket, :tickers, &Enum.sort([price.ticker | &1]))
+
+    {:noreply, socket}
+  end
+
+  # From OrderWatcher: a resting order filled or was rejected. The DB already changed, so reload.
+  def handle_info({:pending_order_event, kind, text}, socket) do
+    {:noreply, socket |> reload_trading() |> assign(message: {kind, text})}
   end
 
   # The form's Buy/Sell button that was clicked arrives as "side" (the submitter's name/value).
@@ -89,6 +115,56 @@ defmodule StockFetcherWeb.PricesLive do
       {:error, reason} ->
         {:noreply, assign(socket, message: {:error, Trading.error_message(reason)})}
     end
+  end
+
+  # phx-change: remember the form's current values so re-renders keep them.
+  def handle_event("order_form", params, socket),
+    do: {:noreply, assign(socket, order_form: Map.take(params, ["ticker", "quantity"]))}
+
+  def handle_event("limit_form", params, socket) do
+    {:noreply,
+     assign(socket, limit_form: Map.take(params, ["ticker", "quantity", "limit", "stop"]))}
+  end
+
+  # Limit buy entry with an optional stop-loss (step G, LiveView only).
+  def handle_event("limit_order", params, socket) do
+    %{"ticker" => ticker, "quantity" => quantity, "limit" => limit} = params
+    portfolio_id = socket.assigns.portfolio.id
+
+    result =
+      Trading.place_limit_order(portfolio_id, ticker, quantity, limit, params["stop"],
+        source: socket.assigns.source,
+        current_price: get_in(socket.assigns.prices, [ticker, :price])
+      )
+
+    message =
+      case result do
+        {:ok, :placed, pending} -> {:ok, "Placed #{Trading.describe(pending)}."}
+        {:ok, :filled, %{order: order}} -> {:ok, "Filled now: " <> confirmation(order)}
+        {:error, reason} -> {:error, Trading.error_message(reason)}
+      end
+
+    {:noreply, socket |> reload_trading() |> assign(message: message)}
+  end
+
+  def handle_event("cancel_order", %{"id" => id}, socket) do
+    message =
+      case Trading.cancel_pending_order(socket.assigns.portfolio.id, id) do
+        {:ok, pending} -> {:ok, "Cancelled #{Trading.describe(pending)}."}
+        {:error, reason} -> {:error, Trading.error_message(reason)}
+      end
+
+    {:noreply, socket |> reload_trading() |> assign(message: message)}
+  end
+
+  defp reload_trading(socket) do
+    id = socket.assigns.portfolio.id
+
+    assign(socket,
+      portfolio: Trading.get_portfolio!(id),
+      orders: Trading.list_orders(id),
+      pending: Trading.list_pending_orders(id)
+    )
   end
 
   @impl true
@@ -130,11 +206,11 @@ defmodule StockFetcherWeb.PricesLive do
           Paper trading: market orders fill at the price shown above.
         </p>
 
-        <form id="order-form" phx-submit="order" class="mt-4 flex flex-wrap items-end gap-3">
+        <form id="order-form" phx-submit="order" phx-change="order_form" class="mt-4 flex flex-wrap items-end gap-3">
           <label class="flex flex-col text-sm">
             Ticker
             <select name="ticker" class="mt-1 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900">
-              <option :for={ticker <- @prices |> Map.keys() |> Enum.sort()} value={ticker}>
+              <option :for={ticker <- @tickers} value={ticker} selected={ticker == @order_form["ticker"]}>
                 {ticker}
               </option>
             </select>
@@ -144,7 +220,8 @@ defmodule StockFetcherWeb.PricesLive do
             <input
               type="number"
               name="quantity"
-              value="1"
+              value={@order_form["quantity"]}
+              phx-debounce="250"
               min="1"
               step="1"
               class="mt-1 w-28 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
@@ -154,7 +231,7 @@ defmodule StockFetcherWeb.PricesLive do
             type="submit"
             name="side"
             value="buy"
-            disabled={@prices == %{}}
+            disabled={@tickers == []}
             class="rounded bg-emerald-600 px-4 py-1.5 font-medium text-white disabled:opacity-40"
           >
             Buy
@@ -163,7 +240,7 @@ defmodule StockFetcherWeb.PricesLive do
             type="submit"
             name="side"
             value="sell"
-            disabled={@prices == %{}}
+            disabled={@tickers == []}
             class="rounded bg-rose-600 px-4 py-1.5 font-medium text-white disabled:opacity-40"
           >
             Sell
@@ -180,6 +257,66 @@ defmodule StockFetcherWeb.PricesLive do
         >
           {elem(@message, 1)}
         </p>
+
+        <form id="limit-form" phx-submit="limit_order" phx-change="limit_form" class="mt-6 flex flex-wrap items-end gap-3">
+          <span class="w-full text-sm font-semibold">Limit buy with stop-loss</span>
+          <label class="flex flex-col text-sm">
+            Ticker
+            <select name="ticker" class="mt-1 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900">
+              <option :for={ticker <- @tickers} value={ticker} selected={ticker == @limit_form["ticker"]}>
+                {ticker}
+              </option>
+            </select>
+          </label>
+          <label class="flex flex-col text-sm">
+            Quantity
+            <input
+              type="number"
+              name="quantity"
+              value={@limit_form["quantity"]}
+              phx-debounce="250"
+              min="1"
+              step="1"
+              class="mt-1 w-24 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+            />
+          </label>
+          <label class="flex flex-col text-sm">
+            Limit $
+            <input
+              type="number"
+              name="limit"
+              value={@limit_form["limit"]}
+              phx-debounce="250"
+              min="0.01"
+              step="0.01"
+              required
+              class="mt-1 w-28 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+            />
+          </label>
+          <label class="flex flex-col text-sm">
+            Stop $ (optional)
+            <input
+              type="number"
+              name="stop"
+              value={@limit_form["stop"]}
+              phx-debounce="250"
+              min="0.01"
+              step="0.01"
+              class="mt-1 w-28 rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={@tickers == []}
+            class="rounded bg-sky-600 px-4 py-1.5 font-medium text-white disabled:opacity-40"
+          >
+            Place limit buy
+          </button>
+          <span class="w-full text-xs text-zinc-500 dark:text-zinc-400">
+            Fills only when the price trades below the limit, at the limit price. The stop-loss
+            then sells at the first price at or below the stop, which can be lower if the price gaps.
+          </span>
+        </form>
 
         <p id="cash" class="mt-6 text-lg">
           Cash: <span class="font-semibold tabular-nums">{format_cents(@portfolio.cash_cents)}</span>
@@ -211,6 +348,22 @@ defmodule StockFetcherWeb.PricesLive do
             </tr>
           </tbody>
         </table>
+
+        <h3 class="mt-6 font-semibold">Open orders</h3>
+        <p :if={@pending == []} class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">No open orders.</p>
+        <ul :if={@pending != []} id="open-orders" class="mt-2 space-y-1 text-sm tabular-nums">
+          <li :for={p <- @pending} id={"pending-#{p.id}"} class="flex items-center gap-3">
+            <span>{Trading.describe(p)}</span>
+            <button
+              type="button"
+              phx-click="cancel_order"
+              phx-value-id={p.id}
+              class="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+            >
+              Cancel
+            </button>
+          </li>
+        </ul>
 
         <h3 class="mt-6 font-semibold">Order history</h3>
         <p :if={@orders == []} class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">No orders yet.</p>

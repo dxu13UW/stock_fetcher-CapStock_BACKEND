@@ -129,6 +129,87 @@ defmodule StockFetcherWeb.PricesLiveTest do
     end
   end
 
+  describe "forms survive price ticks" do
+    # Every tick re-renders the page. LiveView only protects the focused input, so the
+    # server must remember what was typed (phx-change) or the next tick resets it.
+    test "typed values and the chosen ticker stay after a tick", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZA", 10.0)
+      broadcast_price("ZZB", 20.0, "stocks:mock")
+      assert has_element?(view, "#order-form option[value=ZZB]")
+
+      view |> form("#order-form", %{ticker: "ZZB", quantity: "7"}) |> render_change()
+
+      view
+      |> form("#limit-form", %{ticker: "ZZB", quantity: "3", limit: "19.5", stop: "18"})
+      |> render_change()
+
+      broadcast_price("ZZA", 11.0, "stocks:mock")
+      assert has_element?(view, "#price-ZZA", "11.00")
+
+      assert has_element?(view, ~s|#order-form option[value=ZZB][selected]|)
+      assert has_element?(view, ~s|#order-form input[name=quantity][value="7"]|)
+      assert has_element?(view, ~s|#limit-form option[value=ZZB][selected]|)
+      assert has_element?(view, ~s|#limit-form input[name=limit][value="19.5"]|)
+      assert has_element?(view, ~s|#limit-form input[name=stop][value="18"]|)
+    end
+  end
+
+  describe "limit orders (step G)" do
+    defp submit_limit(view, ticker, quantity, limit, stop) do
+      view
+      |> form("#limit-form", %{ticker: ticker, quantity: quantity, limit: limit, stop: stop})
+      |> render_submit()
+    end
+
+    test "a limit above the price rests in Open orders and can be cancelled", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZL", 105.0)
+
+      submit_limit(view, "ZZL", "3", "100", "90")
+
+      assert has_element?(
+               view,
+               "#order-message",
+               "Placed limit buy 3 ZZL at $100.00, stop $90.00."
+             )
+
+      assert has_element?(view, "#open-orders", "limit buy 3 ZZL at $100.00, stop $90.00")
+
+      view |> element("#open-orders button", "Cancel") |> render_click()
+      assert has_element?(view, "#order-message", "Cancelled limit buy 3 ZZL")
+      refute has_element?(view, "#open-orders")
+    end
+
+    test "a limit already above the price fills now and opens the stop-loss", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZL", 95.0)
+
+      submit_limit(view, "ZZL", "2", "100", "90")
+      assert has_element?(view, "#order-message", "Filled now: Bought 2 ZZL at $95.00 ($190.00)")
+      assert has_element?(view, "#position-ZZL")
+      assert has_element?(view, "#open-orders", "stop-loss sell 2 ZZL at $90.00")
+    end
+
+    test "an invalid stop shows the error", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZL", 105.0)
+
+      submit_limit(view, "ZZL", "1", "100", "120")
+      assert has_element?(view, "#order-message", Trading.error_message(:invalid_stop))
+    end
+
+    test "OrderWatcher fills it from the price stream and the page updates", %{conn: conn} do
+      watcher = start_supervised!({StockFetcher.OrderWatcher, source: :mock})
+      view = mock_view_with_price(conn, "ZZL", 105.0)
+      submit_limit(view, "ZZL", "4", "100", "")
+
+      broadcast_price("ZZL", 99.0, "stocks:mock")
+      # Wait for the watcher to handle the tick; its event reaches the view before our next call.
+      :sys.get_state(watcher)
+
+      assert has_element?(view, "#order-message", "Limit order filled: Bought 4 ZZL at $100.00")
+      assert has_element?(view, "#position-ZZL")
+      refute has_element?(view, "#open-orders")
+    end
+  end
+
   # Overrides the test clock from config/test.exs for one test (this module is async: false).
   defp pin_clock(now) do
     previous = Application.get_env(:stock_fetcher, :trading_fixed_now)

@@ -19,3 +19,7 @@ config :stock_fetcher, :req_options,
 # Trading rejects live orders outside market hours. Pin the clock to a Wednesday, 11:00 AM ET,
 # so order tests pass whenever they run; tests for the closed market pass `now:` or override it.
 config :stock_fetcher, :trading_fixed_now, ~U[2026-11-04 16:00:00Z]
+
+# OrderWatchers query the DB on every tick; the global ones would run outside the SQL sandbox.
+# Tests that need one start it themselves.
+config :stock_fetcher, :enable_order_watchers, false

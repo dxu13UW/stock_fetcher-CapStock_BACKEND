@@ -740,7 +740,103 @@ without the backend endpoints. Tried it in the browser on the live SPA: it works
 - Ask John at the handover: is rejecting after-hours orders what he expects, or does he trade
   extended hours and want queued orders (B)?
 
+### Step G: limit entries with a hard stop-loss (LiveView only)
+**Scope.** Long trades only: a limit buy entry, plus the stop-loss sell it creates when it
+fills, and cancel. Of the four exits (long/short × stop-loss/take-profit) only the long
+stop-loss exists. Take-profit (with OCO) and shorts were deprioritized for this deadline with
+John's agreement (Nov 4), not because they're infeasible: take-profit is about half a day,
+shorts one to two days (negative positions, P/L sign, the collateral rule in open question 8).
+
+**Paper trading has no counterparty.** My question: with nobody on the other side, are fills
+realistic? No: Capstock ignores the bid-ask spread, price impact, the queue at a price, and
+partial fills, so it's optimistic. The queue matters most for limits: a touch at your limit
+may not fill in a real market. Fill rules, decided by me with John's permission, strict so paper
+results never flatter him:
+- Limit buy: only when a price trades *through* the limit (strictly below), filled at the limit.
+- Stop sell: at or below the stop, filled at that tick's price, so a gap gives a worse fill.
+- A limit already above the current price fills immediately at the current price (if the
+  market is open), like a real exchange.
+Spread, impact and partial fills stay ignored and are written down: small for John's sizes in
+liquid stocks, and we have no bid/ask data.
+
+**Process design (my answers).**
+1. A supervised GenServer subscribed to the price topic; not `PricesLive`, because a LiveView
+   dies with its tab and a stop-loss has to work while John isn't looking.
+2. Open orders live in SQLite. A GenServer's state is just memory and is gone when it crashes.
+3. Cancel vs fill: each is one conditional `UPDATE ... WHERE status = 'open'`; whichever runs
+   first flips the status, the other matches 0 rows (fill rolls back before money moves; cancel
+   says "no longer open"). A lock alone isn't enough: the second writer would wait and then
+   overwrite. The condition re-checks the state. (Alternative: route cancels through the
+   GenServer's mailbox. Kept the DB guard: works while the watcher restarts, rule stays in
+   `Trading`.)
+4. Saturday's demo with the market closed: the mock stream.
+
+**Agent refinements, agreed.**
+- The watcher keeps *no* copy of the orders: on each tick it queries the open orders for that
+  ticker (indexed; live 5 per 15 s, mock 1 per 1.5 s). Nothing to reload after a crash, no
+  messages for new or cancelled orders, no copy that can disagree with the DB.
+- One `OrderWatcher` per source (`:live` on "stocks:live", `:mock` on "stocks:mock"). Mock uses
+  the same tickers with made-up prices; separate watchers mean a mock tick can't reach a live
+  order.
+- A separate mock portfolio ("demo-mock"). Found while designing: since step E, mock market
+  orders had been mixed into the real-price portfolio.
+
+**Built.** `pending_orders` table (`source`, `type`, `trigger_cents`, `stop_cents`, `status`
+open → filled/cancelled/rejected, `parent_id`, `order_id`); `Trading.place_limit_order`,
+`fill_pending_order` (claim, fill through the market-order code, create the stop, all in one
+transaction; rejected if it can't be afforded), `cancel_pending_order`; `OrderWatcher`, off in
+tests (each test starts its own on a private topic against the SQL sandbox); in `PricesLive` a
+separate "Limit buy with stop-loss" form (the benchmark form is unchanged, for fairness with
+React), Open orders with Cancel, and fills pushed to the page over PubSub. 23 new tests incl. a
+killed watcher being restarted by its supervisor and still filling.
+
+**Mine: `fill_rule/2` and `OrderWatcher.handle_info/2`.**
+- `fill_rule`: first try had one-argument heads, so the price was undefined and the compiler
+  saw a separate `fill_rule/1`. Then the old catch-all stub was still the first clause:
+  clauses are tried top to bottom, so specific clauses go first and the catch-all last; a
+  failing guard counts as "doesn't match". Named the tick argument `price_cents`: dollars
+  (floats) and cents (integers) both exist here, and the unit in the name makes a ×100 mistake
+  visible.
+- `handle_info`: `Enum.each(orders, fn order -> case ... end end)`. First try put
+  `{:noreply, state}` inside the `:wait` branch, so the function returned `Enum.each`'s `:ok`
+  and the GenServer crashed on every tick with `bad return value: :ok` (a crash loop the
+  supervisor would eventually give up on). Inside the `fn`: the result for one order,
+  discarded; last line of `handle_info`: the result the GenServer checks.
+- Learned: stop-loss vs take-profit. Both close a position; stop is below a long entry and is a
+  stop order (guarantees the exit, not the price), take-profit is above and is a limit order
+  (guarantees the price, not the exit). Set together they're a bracket, linked as OCO.
+
+**Bug I found trying it: forms reset on every tick.** Dropdowns closed and typed numbers went
+back to the defaults. Each tick changed `@prices`, which re-sent the dropdown options; and
+LiveView only protects the *focused* input from re-renders, so the others were reset to what the
+server last rendered. Fix: `phx-change` keeps the form's values on the server (`@order_form`,
+`@limit_form`, debounced 250 ms), and the options come from a separate `@tickers` assign that
+only changes when a new ticker appears. Regression test added.
+
+### LiveView vs. React observations (step G)
+- The form bug is a LiveView-specific cost. React's panel never had it: controlled inputs keep
+  their state in the browser, so re-rendering the table can't touch them. In LiveView the server
+  renders the form, so it must be told what's in it: a WebSocket message per edit. Count those
+  next to "bytes per price tick" in the metrics.
+- The resting-order watcher is plain OTP and would serve a React UI unchanged; only the page
+  updates (a PubSub event straight into the LiveView process) are LiveView-specific. React
+  would need a channel event or polling for "your order filled".
+
+### Trying it on the mock stream
+- Limit at $169.20 with AAPL at $168.98, stop $168.80: filled immediately at $168.98, and the
+  stop sold 8 s later at $168.35, $0.45 past the stop (a gap), for −$6.30 where I'd planned
+  −$1.80. Stopped out by noise: the stop was $0.18 away and mock ticks move up to $0.75. Same
+  reason John puts stops past the swing, not next to the entry.
+- A winning trade (10 AAPL at $164.41, up to +$38.90) showed the gap that matters most: I
+  couldn't move the stop up to break-even or to lock in profit. A stop only exists when an entry
+  creates it, and cancelling it leaves no protection.
+- Next features, ranked from using it: (1) move/trail the stop on an open position, (2)
+  take-profit with OCO, (3) shorts. Ask John which he misses most.
+
 ### Next
+- Deploy step G (runs the `pending_orders` migration on Fly, starts both watchers).
 - Open the PR `feat/trading-panel` → `main` in `CapStock_FrontEnd`.
-- Limit/stop orders (G): design the process first.
-- Book the Saturday Nov 7 handover with John; decide whether to reset the demo portfolio first.
+- Handover with John on Sat Nov 7: walk through limit + stop on `/prices?source=mock`; ask about
+  after-hours rejection, UTC times, touch fills, and which next feature; decide whether to reset
+  the live demo portfolio first.
+- Metrics (predictions first), then the final log, merge and submission on Sunday.
