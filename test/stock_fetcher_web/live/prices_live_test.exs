@@ -722,6 +722,43 @@ defmodule StockFetcherWeb.PricesLiveTest do
     end
   end
 
+  describe "abuse and memory guards (2026-11-08)" do
+    defp with_env(key, value) do
+      previous = Application.get_env(:stock_fetcher, key)
+      Application.put_env(:stock_fetcher, key, value)
+      on_exit(fn -> Application.put_env(:stock_fetcher, key, previous) end)
+    end
+
+    test "each tab's process has a memory ceiling that kills only that process", %{conn: conn} do
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+      {:max_heap_size, %{size: size, kill: true}} = Process.info(view.pid, :max_heap_size)
+      assert size * :erlang.system_info(:wordsize) == 50_000_000
+    end
+
+    test "too many events in a second are refused, without running them", %{conn: conn} do
+      with_env(:lv_events_per_second, 3)
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+
+      # 10 quick events: even split across two one-second windows, at most 6 get through.
+      for _ <- 1..10, do: render_click(view, "toggle_panel", %{"panel" => "short_tp"})
+
+      assert has_element?(view, "#order-message", "Too many actions at once")
+    end
+
+    test "too many new connections from one IP get a page with no live work", %{conn: conn} do
+      with_env(:lv_connections_per_minute, 0)
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+
+      assert has_element?(view, "#order-message", "Too many connections from your network")
+      # No portfolio was created for this tab.
+      import Ecto.Query
+
+      refute StockFetcher.Repo.exists?(
+               from(p in StockFetcher.Trading.Portfolio, where: like(p.name, "session:%"))
+             )
+    end
+  end
+
   # The only session portfolio for a source in this test's sandbox (one view open).
   defp session_portfolio_id(source) do
     import Ecto.Query

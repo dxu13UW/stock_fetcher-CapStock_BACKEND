@@ -18,6 +18,15 @@ primary_region = "sjc"
   protocol = "tcp"
   internal_port = 4000
 
+  # Connection limits at Fly's proxy, before anything reaches the app's memory (2026-11-08).
+  # Every open LiveView tab is a server process (~150 KB+) on a 256 MB machine, so an unlimited
+  # number of connections could OOM it. Past the soft limit Fly prefers other machines (there's
+  # one), past the hard limit it queues/refuses new connections. 250 tabs is ~40-60 MB.
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
   [[services.ports]]
     port = 80
     handlers = ["http"]

@@ -17,14 +17,23 @@ defmodule StockFetcherWeb.Endpoint do
         "https://tinle-ri.github.io",
         "http://localhost:5173",
         "http://localhost:4000"
-      ]
+      ],
+      # React only sends small channel messages; Bandit's default cap is 8 MB.
+      max_frame_size: 100_000
     ],
     longpoll: false
 
   # LiveView socket. Each connected LiveView page runs as a process behind this socket.
+  #
+  # max_frame_size: the biggest real message is the join carrying the browser's autosave (a save
+  # file is at most 1 MB, a bit more once escaped inside JSON), so 2 MB instead of Bandit's 8 MB
+  # default. peer_data/x_headers: the client IP for the per-IP connection limit in PricesLive.
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [
+      connect_info: [:peer_data, :x_headers, session: @session_options],
+      max_frame_size: 2_000_000
+    ],
+    longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
 
   # Serves the built CSS/JS from priv/static/assets.
   plug Plug.Static,

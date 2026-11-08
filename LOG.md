@@ -361,3 +361,26 @@ React SPA and the benchmark panel are unchanged).
 - **Lesson:** tests can't catch an out-of-memory kill. Measure the memory of anything that loads
   data at boot, and know the server's size.
 - Merged `liveview` into `main` (`abdb361`).
+
+### Abuse and memory guards (2026-11-08)
+I asked what DDoS/OOM protection existed. Already there: per-IP rate limits on the JSON API,
+the patched Bandit/Mint DoS advisories, save-file size limits, no per-user market-data calls,
+origin checks. Missing: anything limiting LiveView, where every open tab is a server process on a
+256 MB machine. Added four guards:
+1. **Connection limits at Fly's proxy** (`fly.toml`: soft 200, hard 250 connections), so floods
+   are queued or refused before they reach the app's memory. 250 tabs ≈ 40–60 MB.
+2. **Rate limits in `PricesLive`:** new LiveView connections per client IP (30/min, Hammer; IP from
+   `Fly-Client-IP`), and events per tab (20/s), counted in the tab's own process dictionary
+   (a per-second Hammer key per tab would pile up ETS rows for an hour, working against the
+   memory goal). A blocked connection gets a message and no subscriptions or portfolio row.
+3. **WebSocket frame caps:** 2 MB on `/live` (the largest real message is the join carrying the
+   autosave), 100 KB on React's `/socket`, down from Bandit's 8 MB default.
+4. **`max_heap_size` per LiveView process** (50 MB, kill): a runaway tab dies alone; the janitor
+   cleans up and the browser reconnects from its autosave.
+- **Checked:** 181 tests (heap flag set; an event flood refused; a blocked connection creates no
+  portfolio); `fly config validate`; real oversized frames closed with 1009 ("message too big")
+  on both sockets.
+- **Still out of scope:** network-level floods need the hosting edge or a CDN/WAF in front;
+  LiveView's long-poll fallback isn't frame-capped (bodies go through Plug's 8 MB default).
+- **LiveView vs React:** a static React frontend on a CDN can't be flooded this way, only its API.
+  LiveView's per-visitor processes make connection limits a must, not a nice-to-have.
