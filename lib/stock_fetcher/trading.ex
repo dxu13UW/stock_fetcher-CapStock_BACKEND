@@ -56,6 +56,7 @@ defmodule StockFetcher.Trading do
           | :long_open
           | :insufficient_short
           | :not_open
+          | :invalid_starting_cash
 
   # Which way an order trades. Used in guards, so fill_rule/2 reads as the 2x2 table it is.
   @buying ["buy", "cover"]
@@ -66,7 +67,106 @@ defmodule StockFetcher.Trading do
   @rejections [:insufficient_cash, :insufficient_shares, :insufficient_short] ++
                 [:short_open, :long_open, :portfolio_not_found]
 
+  # Buying power a user may start a session portfolio with (2026-11-07): $1,000 to $2,000,000.
+  @min_starting_cash_cents 100_000
+  @max_starting_cash_cents 200_000_000
+
   def starting_cash_cents, do: @starting_cash_cents
+  def starting_cash_range, do: {@min_starting_cash_cents, @max_starting_cash_cents}
+
+  @doc """
+  Creates a private portfolio for one LiveView tab (2026-11-07). `starting_cash` is dollars
+  (a form string such as "250000" or "250,000.50", or a number), between $1,000 and $2,000,000.
+
+  Nobody else can reach it: its id lives only in that tab's LiveView process (never in a URL
+  or cookie), so there is nothing for another visitor to guess or share. It is deleted when the
+  tab closes; the user keeps their progress in a save file (`Trading.SaveFile`).
+  """
+  def create_session_portfolio(source, starting_cash \\ @starting_cash_cents / 100)
+      when source in [:live, :mock] do
+    with {:ok, cents} <- starting_cash_cents(starting_cash) do
+      {:ok, insert_session_portfolio!(source, cents, cents)}
+    end
+  end
+
+  @doc false
+  # Shared with SaveFile, which restores a cash balance different from the starting amount.
+  def insert_session_portfolio!(source, cash_cents, starting_cash_cents) do
+    name =
+      "session:#{source}:" <> Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+
+    Repo.insert!(%Portfolio{
+      name: name,
+      cash_cents: cash_cents,
+      starting_cash_cents: starting_cash_cents
+    })
+    |> Repo.preload(:positions)
+  end
+
+  @doc "True for a per-tab session portfolio (see `create_session_portfolio/2`)."
+  def session_portfolio?(%Portfolio{name: "session:" <> _}), do: true
+  def session_portfolio?(_), do: false
+
+  @doc """
+  Deletes a portfolio with its positions, orders and resting orders (the foreign keys cascade).
+  Only session portfolios: the shared demo ones belong to the React SPA too.
+  """
+  def delete_session_portfolio(id) do
+    {count, _} =
+      Repo.delete_all(from(p in Portfolio, where: p.id == ^id and like(p.name, "session:%")))
+
+    count
+  end
+
+  @doc "Deletes every session portfolio. Run once at boot: no tab survives a restart."
+  def delete_all_session_portfolios do
+    {count, _} = Repo.delete_all(from(p in Portfolio, where: like(p.name, "session:%")))
+    count
+  end
+
+  @doc """
+  What a portfolio is worth at the given prices, in cents: cash, plus each long position at its
+  price, plus what covering each short would return (its collateral, `qty x avg`, plus the P/L,
+  `qty x (avg - price)`), which is the same `qty x (2 x avg - price)` that `cover/5` credits.
+  `price_fun` returns a ticker's price in cents or nil; a position without a price counts at its
+  average cost. Display only.
+  """
+  def account_value_cents(%Portfolio{cash_cents: cash, positions: positions}, price_fun) do
+    Enum.reduce(positions, cash, fn pos, acc ->
+      price = price_fun.(pos.ticker) || pos.avg_cost_cents
+
+      if pos.quantity > 0,
+        do: acc + pos.quantity * price,
+        else: acc + -pos.quantity * (2 * pos.avg_cost_cents - price)
+    end)
+  end
+
+  @doc "A portfolio's starting cash; the old demo portfolios predate the column."
+  def starting_cash(%Portfolio{starting_cash_cents: nil}), do: @starting_cash_cents
+  def starting_cash(%Portfolio{starting_cash_cents: cents}), do: cents
+
+  defp starting_cash_cents(value) when is_binary(value) do
+    case value |> String.replace([",", "$", " "], "") |> Decimal.parse() do
+      {decimal, ""} -> starting_cash_cents(decimal)
+      _ -> {:error, :invalid_starting_cash}
+    end
+  end
+
+  defp starting_cash_cents(value) when is_float(value),
+    do: value |> Decimal.from_float() |> starting_cash_cents()
+
+  defp starting_cash_cents(value) when is_integer(value),
+    do: value |> Decimal.new() |> starting_cash_cents()
+
+  defp starting_cash_cents(%Decimal{} = dollars) do
+    cents = dollars |> Decimal.mult(100) |> Decimal.round(0, :down) |> Decimal.to_integer()
+
+    if cents in @min_starting_cash_cents..@max_starting_cash_cents,
+      do: {:ok, cents},
+      else: {:error, :invalid_starting_cash}
+  end
+
+  defp starting_cash_cents(_), do: {:error, :invalid_starting_cash}
 
   @doc """
   Returns the demo portfolio for a price source (with positions), creating it on first use.
@@ -132,6 +232,10 @@ defmodule StockFetcher.Trading do
 
   @doc "User-facing text for an error reason. Both UIs show the same messages (benchmark spec)."
   def error_message(:insufficient_cash), do: "Insufficient cash for this order."
+
+  def error_message(:invalid_starting_cash),
+    do: "Starting buying power must be between $1,000 and $2,000,000."
+
   def error_message(:insufficient_shares), do: "You can't sell more shares than you hold."
   def error_message(:unknown_ticker), do: "Unknown ticker: no price available."
   def error_message(:invalid_quantity), do: "Quantity must be a whole number greater than 0."
@@ -274,6 +378,8 @@ defmodule StockFetcher.Trading do
         order =
           fill(pending.side, pending.portfolio_id, pending.ticker, pending.quantity, fill_cents)
 
+        # Record how it was placed, for the order history ("take-profit", "stop-loss", ...).
+        order = order |> Ecto.Changeset.change(via: via(pending)) |> Repo.update!()
         pending = pending |> Ecto.Changeset.change(order_id: order.id) |> Repo.update!()
 
         %{
@@ -294,6 +400,10 @@ defmodule StockFetcher.Trading do
         other
     end
   end
+
+  defp via(%PendingOrder{type: "stop"}), do: "stop_loss"
+  defp via(%PendingOrder{type: "limit", parent_id: nil}), do: "limit_entry"
+  defp via(%PendingOrder{type: "limit"}), do: "take_profit"
 
   @doc """
   Moves an open exit (a stop-loss or take-profit) to `new_price`, e.g. to raise a long's stop
@@ -348,6 +458,45 @@ defmodule StockFetcher.Trading do
         order_by: p.id
       )
     )
+  end
+
+  @doc """
+  A portfolio's open orders grouped the way the page shows them (2026-11-07): each filled
+  entry's exits together as one bracket, then the entries still waiting to fill.
+
+    * `%{kind: :bracket, id: parent_id, ticker, quantity, direction: :long | :short,
+      entry_cents: fill price or nil, exits: [PendingOrder, ...] (highest price first)}`
+    * `%{kind: :entry, id: id, order: PendingOrder}`
+
+  The exits of one bracket share a `parent_id` (that's also how OCO finds the sibling), so
+  grouping by it is exact. `entry_cents` comes from the parent's fill (`parent.order`).
+  Newest first within each kind.
+  """
+  def open_order_groups(portfolio_id) do
+    {exits, entries} =
+      portfolio_id
+      |> list_pending_orders()
+      |> Repo.preload(parent: :order)
+      |> Enum.split_with(&exit?/1)
+
+    brackets =
+      exits
+      |> Enum.group_by(& &1.parent_id)
+      |> Enum.map(fn {parent_id, [first | _] = list} ->
+        %{
+          kind: :bracket,
+          id: parent_id,
+          ticker: first.ticker,
+          quantity: first.quantity,
+          # A long is closed by selling, a short by covering.
+          direction: if(first.side == "sell", do: :long, else: :short),
+          entry_cents: first.parent && first.parent.order && first.parent.order.price_cents,
+          exits: Enum.sort_by(list, & &1.trigger_cents, :desc)
+        }
+      end)
+      |> Enum.sort_by(& &1.id, :desc)
+
+    brackets ++ Enum.map(entries, &%{kind: :entry, id: &1.id, order: &1})
   end
 
   @doc "A portfolio's open resting orders, newest first."

@@ -111,11 +111,12 @@ Full transcript is in `LOG.md`. Summary of what they told me:
 | Trades high-beta names like QBTS | AAPL, AMZN, GOOGL, MSFT, TSLA | Alpaca poller for extra tickers (section 5, step B2) |
 
 ### Interview questions (answers go in `LOG.md`)
-1. One shared demo portfolio, or separate accounts? *(my assumption, which John accepted at
-   handover: one shared demo portfolio, plus a separate one for the mock stream)*
+1. One shared demo portfolio, or separate accounts? *(LiveView, 2026-11-07 evening: neither. Each
+   tab gets a private portfolio and the user keeps it in a signed save file; no accounts. The
+   React SPA keeps the shared demo portfolio.)*
 2. Order types: market only, or limit/stop too? *(answered: limit entries, hard stop-losses,
    partial exits, and short selling)*
-3. Starting cash? *(open; their example position was $60,000)*
+3. Starting cash? *(the user picks $1,000 to $2,000,000; default $100,000)*
 4. How should dividends appear (cash credit, event feed, per-position history)? *(open; not
    mentioned in interview 1)*
 5. What does "smooth" mean to you on the current React UI? What feels slow or jumpy? *(open)*
@@ -164,7 +165,8 @@ fairly. Interview-driven order types go in LiveView only (below). *(Confirmed 20
 - **From interview 1, in priority order** (status as of 2026-11-07; see "Scope update" below):
   1. Limit-order entries (resting until a broadcast price crosses the limit). **Built** (Nov 6).
   2. Hard stop-loss attached at entry. **Built** (Nov 6).
-  3. Pre-trade risk preview: position size, $ at risk, % at risk. *Cut.*
+  3. Pre-trade risk preview: position size, $ at risk, % at risk. **Built** (Nov 7 evening)
+     in each exit panel, plus target and R:R.
   4. Short / Cover actions. "Sell" keeps its benchmark meaning, so "selling more than held"
      is still an error. **Built** (Nov 7): market Short/Cover in their own form, plus short
      limit entries.
@@ -173,7 +175,8 @@ fairly. Interview-driven order types go in LiveView only (below). *(Confirmed 20
      partial Sell/Cover of any quantity; no one-click "close half".
   6. Trade history with $ risked vs. $ made. **Partly built:** order history with prices and
      totals; no $ risked vs. $ made column.
-  7. 4-hour candles with marked zones. *Cut* (time, not data).
+  7. 4-hour candles with marked zones. **Partly built** (Nov 7 evening): a 5-minute
+     candlestick chart for every ticker; no 4-hour timeframe and no zone marking.
 - Simulated dividends (not mentioned in interview 1; lower priority until confirmed).
 
 ### Out of scope
@@ -210,9 +213,33 @@ next zone):
 - **Local times** instead of UTC, in both UIs.
 
 Still cut: dividends (H), 4-hour candles (I), staging, the Alpaca poller (B2), the pre-trade
-risk preview, and the `claude -p` console bonus. Kept: live orders are rejected while the
+risk preview, and the `claude -p` console bonus. *(The poller and the risk preview came
+back in scope update 2, below.)* Kept: live orders are rejected while the
 market is closed, and resting orders only fill when a price crosses the trigger (no "touch"
 fills). Reasons in `LOG.md` (2026-11-07).
+
+### Scope update 2 (2026-11-07 evening, ahead of schedule)
+My own requests, LiveView only (React SPA unchanged). Decisions and reasons in `LOG.md`.
+- **50 tickers, free:** the Alpaca poller (B2) for 45 extra tickers on a separate topic, so React
+  keeps its 5. Mock stream extended to all 50.
+- **Candlestick chart** (about a quarter of the page): Alpaca SIP 5-minute history cached in one
+  process per source, plus candles built from live ticks.
+- **Sidebar:** portfolio card and the four exit strategies as an accordion, each with a
+  what/how/why tutorial, example prices and a risk preview. A non-modal help panel.
+- **Watchlist filter:** fuzzy search on ticker and name with flash.nvim-style jump labels; `/`
+  focuses it. Runs in the browser.
+- **Jump keys:** a letter on every number input (focus it without the mouse); Esc leaves;
+  Enter never submits, so orders always take a click.
+- **Open order on the chart:** click a card → dotted lines at its prices (blue take-profit,
+  orange stop-loss, grey entry), chart rescaled to show them.
+- **History tags:** orders filled by an exit strategy or limit entry are labelled (`orders.via`).
+- **Apple-style scrollbars:** thin, no arrows or track; pop in while scrolling, fade out after.
+- **Grouped open orders:** each bracket's exits in one box (OCO badge, live price between them).
+- **No ticker dropdowns:** every form trades the watchlist selection, shown as a chip; the
+  benchmark form still submits a `ticker` field, so the server side matches React's.
+- **Private per-tab portfolios + signed save file** (download, import, browser autosave),
+  user-chosen starting cash ($1,000–$2,000,000), with Undo instead of a confirm popup. Trade-off: resting orders only fire while the
+  tab is open.
 
 ### Cut order if time runs short (original; superseded by the agreed scope above)
 1. Dividends → seeded data with a minimal display, or dropped if the interviewee confirms they
@@ -321,7 +348,7 @@ CPU/memory (both need DevTools in a real browser).
 | Wed Nov 4 | Process design notes (D). LiveView trading panel with trade history (E). *(Rescheduled 2026-11-04.)* |
 | Thu Nov 5 | Dockerfile asset step and first deploy (with `1b23b90`). React trading panel (F). |
 | Fri Nov 6 | Limit entries and stop-losses (G), deploy. *(Done; handover sent the same day.)* |
-| Sat Nov 7 | Handover to John on the deployed app, small fixes. Metrics, both UIs. *(Done: John accepted; metrics measured; added shorts, take-profit/OCO, movable exits, local times; deployed; `liveview` merged to `main`.)* |
+| Sat Nov 7 | Handover to John on the deployed app, small fixes. Metrics, both UIs. *(Done: John accepted; metrics measured; added shorts, take-profit/OCO, movable exits, local times; deployed; `liveview` merged to `main`. Evening: scope update 2.)* |
 | **Sun Nov 8, 11:59 PM** | **Due:** final `LOG.md` entry, portfolio card with link and reflection, Canvas submission. |
 
 ## 9. Risks

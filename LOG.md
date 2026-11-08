@@ -966,3 +966,340 @@ on either socket).
   (no `gh` CLI); the merge commit marks the Artifact 4 work. Production already runs this code,
   so no deploy was needed. The React PR (`feat/trading-panel` → `main`) is still to open in
   the GitHub web UI.
+
+## 2026-11-07 (evening) — Ahead of schedule: chart, sidebar, private portfolios, save file, 50 tickers
+
+**Planned.** With the scope shipped and a day to spare, I asked for a second round of features
+(LiveView only; the React SPA and its benchmark panel are unchanged):
+1. UI closer to the React SPA but better: a small candlestick chart (about a quarter of the page),
+   the four exit strategies in a left sidebar as an accordion with a short what/how/why tutorial
+   each, and a non-intrusive "how paper trading works" panel.
+2. A save file to download and import, so the server doesn't hold anyone's progress and there
+   are no accounts. A user-chosen starting buying power ($1,000 to $2,000,000). Enough tickers
+   to scroll through (50), without paying for an API.
+
+**Decisions (asked and answered).**
+- *IEX question first:* I asked whether "IEX-only" means the prices aren't real consumer
+  prices. No: IEX is a regular US exchange. The free Alpaca feed only reports trades on IEX
+  (a few percent of volume), so the price is within about a cent of the market for busy
+  names but can lag for thin ones. So: 50 liquid tickers, IEX for live prices, and Alpaca's
+  free SIP history (15 minutes delayed, all exchanges) for the candles. No Finnhub premium.
+- *Where the portfolio lives:* "tab-only + autosave". A private session portfolio exists on
+  the server only while the tab is open and is deleted when it closes. The browser keeps the
+  latest save in localStorage and sends it back on reconnect; Download/Import move it. Trade-off
+  accepted: stop-losses and take-profits only fire while the tab is open. Rejected: everything
+  in the browser (a rewrite of the DB-backed trading module and its tests, too big for the
+  deadline) and per-browser portfolios kept on the server (the server would hold progress).
+- *Save file:* readable JSON, signed (HMAC-SHA256 keyed from `secret_key_base`). An edited file
+  is refused, so the record stays honest (the point of practice is telling skill from luck).
+- *Sidebar items:* by exit: Long take-profit, Long stop-loss, Short take-profit, Short
+  stop-loss. Market Buy/Sell/Short/Cover stay in the main column.
+
+**What changed.**
+- `StockFetcher.Tickers`: the 50 tickers, where each one's price comes from, company names,
+  and mock starting prices (last IEX trades on Nov 6, one request).
+- `StockFetcher.Alpaca.Poller` (step B2, un-cut): one latest-trades request for 45 symbols every
+  15 s in market hours (4 of 200 requests/min), plus one at boot so weekends show Friday's
+  prices. Broadcasts on a new topic, "stocks:extra", because the React SPA adds every ticker it
+  hears about. Not saved to `stock_prices` for the same reason (React's history endpoints read
+  every ticker there).
+- `Mock.Streamer` takes options; a second instance streams the 45 extras on "stocks:mock:extra",
+  six tickers per tick. `OrderWatcher` subscribes to both topics of its source.
+- `StockFetcher.Candles`, one process per source: live = Alpaca SIP 5-minute bars for all 50 (4
+  days, about 4 paged requests at boot and every 30 min in market hours) plus candles built from
+  live ticks for the last 16 minutes; mock = a made-up history, then candles from mock ticks. One
+  cache for all tabs, so 100 tabs cost the same API calls as 1.
+- Session portfolios: `Trading.create_session_portfolio/2` (name `session:<source>:<random>`,
+  validated $1,000–$2,000,000), `starting_cash_cents` column (migration), `account_value_cents/2`
+  (shorts valued at what covering returns), `Trading.SessionJanitor` (monitors each tab's process
+  and deletes its portfolio on exit; sweeps leftovers at boot).
+- `Trading.SaveFile`: export/import with a canonical (sorted-key) encoding so reformatting
+  doesn't break the signature. Saves cash, starting cash, positions, history, open orders, and
+  the filled parents of open exits (`brackets`), because OCO finds siblings through `parent_id`.
+- `PricesLive` rewritten: sidebar (portfolio card with value, P/L since start, Download, Import,
+  New portfolio; the four exit panels with tutorial, form, "Example prices" and a risk preview:
+  position, risk in $ and % of account, target, R:R), main column (chart, quick trade, 50-row
+  watchlist that charts a ticker on click, positions/open orders/history), help panel toggled
+  with `JS.toggle` (no server round trip). The autosave arrives in the connect params, so mount
+  restores before the first render.
+- `app.js`: `Chart` hook (TradingView Lightweight Charts 4.2.3, vendored, Apache-2.0 with its
+  attribution logo kept), `SaveFile` hook, connect params as a function (re-read on every reconnect).
+- `config/prod.exs`: logger level `:info`. It was unset, so production logged at `:debug`,
+  which includes every LiveView event's parameters (typed form values; now whole save files).
+  This corrects what I said this afternoon ("nothing gets logged"): our code didn't log, but
+  LiveView's own debug logs did.
+- Tests: 165 (from 136): save file round trip incl. OCO after restore, tampering, wrong source,
+  size; session portfolios and the janitor; candle folding; the poller with a stubbed HTTP
+  client; LiveView tests for per-tab isolation, autosave/restore, import, New portfolio, chart
+  events, accordion, example prices and the help panel. Checked in a real browser (Playwright):
+  reload restores the portfolio, Download then Import in a second browser restores open orders.
+
+**LiveView vs React observations.**
+- **A process per tab made "private, no accounts" almost free.** The portfolio's lifetime is
+  the LiveView process's lifetime; a monitor deletes it when the tab goes. In React the same
+  idea needs a session token in localStorage, sent and checked on every API call.
+- **Connect params are a neat LiveView-only trick:** the browser hands its autosave to the
+  server in the join message, so the first render already shows the restored portfolio.
+- **LiveView is not zero-JavaScript.** The chart is a JS library in a hook behind
+  `phx-update="ignore"`; LiveView sends data as events and stays out of the canvas. The first-load
+  bundle went from 145 KB to 309 KB minified (44 → 97 KB gzipped), almost all chart library;
+  React's is 359 KB (121 KB gzipped) with chart.js. The bundle metric is now closer to a fair
+  comparison, since both pages have a chart.
+- **50 rows, one row's worth of bytes per tick:** LiveView 1.2's keyed comprehension (`:key`)
+  sends only the changed row. Not re-measured; the earlier per-tick numbers were for 5 rows.
+- **Server memory per tab will be higher** than the 110–145 KB measured earlier (50 prices and
+  more assigns; candles are pushed, not kept in assigns). Not re-measured.
+- **Deploys now wipe sessions,** by design: tabs reconnect and restore from the autosave. A
+  resting order that would have filled during the restart gap doesn't.
+
+**Known gaps.** Stops only fire while the tab is open (accepted). A dev-machine save won't load
+in production (different `secret_key_base`). Throttled latency and browser CPU still unmeasured.
+
+### Watchlist filter with flash.nvim-style jump labels (same evening)
+- **Asked for:** a filter bar that fuzzy-searches ticker and company name; flash.nvim labels
+  (one letter per result, press it to select); `/` focuses the filter. LiveView only.
+- **Built:** `assets/js/flash.js` (pure functions: `fuzzyScore`, `rank`, `assignLabels`) and a
+  `Flash` hook in `app.js`. Filtering runs in the browser: no round trip per keystroke, and the
+  server never sees the search (unlike `phx-change`, see the keystroke discussion above).
+- **The interesting LiveView problem:** the rows are re-rendered on every tick, and a patch
+  would undo any class or style a hook puts on them. So the hook never touches the rows: it
+  rewrites one `<style>` element inside its own `phx-update="ignore"` box. That stylesheet hides
+  non-matches, orders matches by score (CSS `order`, which is why the watchlist became flex
+  rows instead of a `<table>`) and draws each label with `::before`. A patch can't undo a
+  stylesheet. Bug on the way: the per-row "show" rule (`#price-X`) lost to the "hide all" rule
+  (`#watchlist-rows > [data-ticker]`) on CSS specificity; fixed with `#watchlist-rows > #price-X`.
+- **The flash rule:** a letter that would continue the search (query + letter still matches a
+  row) is never a label, so typing it keeps searching; any other letter jumps. Home-row keys
+  first. Plain subsequence matching made almost every letter a continuation ("a" left no free
+  labels), so the fuzzy match is word-start based like VS Code/fzf: each letter must follow the
+  previous one or start a word ("jj" → Johnson & Johnson, "dwave" → D-Wave, but "ap" no longer
+  matches Alphabet).
+- **Keys:** `/` focuses (ignored while typing in another field), a label selects and charts that
+  row, Enter picks the best match, Esc clears.
+- **Checked:** a Node script over all 50 names asserts no label ever continues the search; a
+  Playwright run checks `/` focus, ranked and labelled matches surviving ticks, jump, Enter,
+  "no matches", Esc, and `/` typed normally inside the quantity box. 166 tests.
+- **LiveView vs React:** in React this is a `useState` filter and a `.filter().sort()` in render.
+  In LiveView, purely client-side UI state has to live in a hook and stay out of LiveView's way;
+  the stylesheet trick is the price of server-rendered rows.
+
+### Time-zone label instead of "your local time" (same evening)
+- The chart caption and the watchlist's "Updated" header now name the viewer's zone (PST, CST,
+  EST, HST; PDT etc. in summer; "GMT+1" where there's no US-style abbreviation), with the full
+  name as a tooltip on the label and on every time. The server renders "UTC", which is what the
+  times say before JavaScript runs; a `TimeZone` hook swaps in `Intl.DateTimeFormat("en-US",
+  {timeZoneName: "short"})`. Checked in a browser emulating Los Angeles, Chicago, New York,
+  Honolulu and Berlin. Same LiveView lesson as local times: the server can't know the viewer's
+  zone, so anything about the viewer's machine is patched in by a hook.
+
+### Ticker dropdowns replaced by the watchlist selection (same evening)
+- **Why:** the watchlist (fuzzy filter + flash labels) is a far better picker than a 50-option
+  `<select>`, and the dropdowns could disagree with the chart (chart on NVDA, Buy set to AAPL).
+- **Built:** every form (Buy/Sell, Short/Cover, the four exit panels) trades `@selected`, the
+  watchlist's choice. A **ticker chip** replaces each dropdown: ticker, company, live price, and
+  "change /". Clicking it focuses the watchlist filter (`JS.focus`, no round trip). Every button
+  names the ticker ("Buy NVDA", "Place long entry · AMD"), so it's never unclear what a click
+  trades. The chip highlights for a moment when the selection changes (its inner span's id
+  includes the ticker, so a new selection is a new element and the CSS animation replays), so a
+  misclicked row is noticed. Buttons stay disabled until the selected ticker has a price. The
+  `phx-change` handlers now keep only typed fields (quantity, prices).
+- **Benchmark:** the React panel still has a dropdown. The LiveView `#order-form` submits the
+  ticker as a hidden `ticker` field, so the event payload and the server code are unchanged
+  and the measured numbers still stand; the UI difference is deliberate and came after the
+  metrics.
+- **Keyboard-only trade:** `/` → `nv` → label letter → quantity → Buy NVDA.
+- **Tests:** the LiveView test helpers now pick a ticker by clicking its row, as a user does.
+  New tests: no `select` on the page, chip and hidden inputs follow the selection, button labels,
+  buttons disabled until the ticker has a price (found a flaky first version: the shared live
+  candle cache had an AAPL tick from another test, so the test uses QBTS). 167 tests, two clean
+  runs; Playwright run of the whole keyboard flow and an exit-panel order.
+
+### "New portfolio": Undo instead of a confirm popup (same evening)
+- **Why:** the browser's `confirm()` blocked the whole page on every Start. Considered: Undo,
+  an inline two-step confirm, and a "recent portfolios" list. Chose Undo (the Gmail
+  "deleted · Undo" pattern): no friction, nothing lost by accident.
+- **Built:** Start (and Import) replace the portfolio at once; the message bar shows
+  "Started a new portfolio with $25,000.00. **Undo**". Before replacing, the server keeps the
+  old portfolio's signed save in `@undo`; Undo imports it, so it comes back exactly (positions,
+  history, open orders). The next trade, order, cancel or move clears `@undo`. An untouched
+  portfolio (no trades or orders, cash as it started) isn't kept, and doesn't overwrite an
+  existing Undo, so "New" twice in a row still brings back the one that had trades.
+- **Cost of the save-file design paying off again:** Undo is a few lines because "a portfolio
+  as signed JSON" already existed.
+- **Tests:** no `data-confirm`; Undo restores; no Undo when untouched; New twice keeps the
+  right Undo; a trade ends it; Import offers it too. (A first try used a made-up `ZZU` ticker,
+  which save files rightly refuse; real users can only trade the 50.) 171 tests, two clean
+  runs. Browser: no dialog fired, Undo restored cash and the position, and a reload kept it.
+
+### Jump keys for number inputs (same evening)
+- **Asked for:** flash-style letters on every number input, shown when no field has focus;
+  the letter focuses that input; Esc leaves a field; as little mouse as possible, but buttons
+  must still take a click.
+- **Found on the way:** pressing Enter in a quantity box submitted the form with its first
+  button, which is **Buy**. A keyboard user could have bought by accident. Now Enter never
+  submits a form (`keydown` guard in app.js; the watchlist filter isn't in a form, so its Enter
+  still picks the top match).
+- **Built:** fixed, memorable letters rendered by the server (`.jump-label` + `data-jump`):
+  b = Buy/Sell quantity, s = Short quantity, q/e/l/t = exit panel quantity/entry/stop/take-profit
+  (one panel open at a time, so no clash), n = new portfolio; the Move boxes in Open orders get
+  free letters in order (a, d, f…). app.js toggles `data-jump-on` on `<html>` (outside LiveView,
+  so patches never undo it) when no field has focus; CSS shows the labels only then. A letter
+  focuses its input and selects the value, so typing replaces it. Buttons have no key. The help
+  panel lists the keys.
+- **Why fixed letters, not positional ones like the watchlist:** these inputs don't change, so
+  the same letter every time becomes muscle memory. The watchlist's letters have to change with
+  each search.
+- **Checked:** LiveView test for the letters (fixed ones, Move boxes a/d, none on buttons);
+  Playwright: labels shown idle and hidden while typing, b→quantity with the value selected,
+  Enter placed no order, Esc left the field, e/l/t/n/s/q reach their boxes, only a click on Buy
+  placed the order. 172 tests.
+
+### Polish: no l/i letters, equal input sizes, three panels (same evening)
+- **No `l` or `i` labels** (they look alike, or like 1, in many fonts): stop-loss's jump key is
+  now `x` ("cut it"); the Move boxes' letters and the watchlist's flash letters skip both.
+- **Equal inputs:** every number box (quantities, exit-panel prices, Move) uses one class,
+  `.num-input` (`w-28`); only the new-portfolio amount and the watchlist filter are wider.
+- **Three panels:** the bottom-right card became Positions (with cash, full width) above Open
+  orders and Order history side by side, in the same footprint. The wrapper is `h-0 min-h-full`
+  in the grid, so it takes its height from the watchlist without adding to it, and each `.panel`
+  scrolls inside.
+- **Checked:** 173 tests (new: the three panels; no `l`/`i` jump keys). Browser: all nine
+  visible number inputs 112 px, buying power 195 px; the panels span exactly the watchlist's
+  height (501–1033 px); jump keys n q e x t b s a d; flash letters for "a" contain no l or i.
+
+### Jump keys for the exit-strategy panels (same evening)
+- The four panel headers get flash-style keys, home row top to bottom: a = Long · take-profit,
+  d = Long · stop-loss, f = Short · take-profit, g = Short · stop-loss. Following flash's spirit,
+  the **open** panel shows no label and its key does nothing; the label comes back when another
+  panel opens. The Move boxes moved to the next free letters (h, j, k, …) so no key has two jobs.
+- These are the only buttons with keys: opening a panel never trades, so the key "clicks" it.
+  Buy/Sell, Short/Cover, Place, Move, Cancel, Start stay click-only. In app.js a key on a button
+  calls `click()`; on an input it focuses and selects.
+- Flow: `f` (open Short · take-profit) → `q` `e` `x` `t` to fill it → click Place.
+- Checked: LiveView test (closed headers a/f/g, none on the open one, the label moves when
+  another opens, Move boxes h/j, no key on order buttons); Playwright (labels a f g → press f →
+  Short · take-profit opens, labels a d g → e lands in its entry → f again does nothing → a
+  switches). 173 tests. Help panel lists the panel keys.
+
+### Jump labels moved inside the inputs (same evening)
+- The labels on number inputs sat above and to the right of each box, which read as floating.
+  They now sit **inside the input's right end**, where the watchlist filter shows its `[/]`, so
+  every key hint lives in the same place. The exit-panel headers keep their corner labels.
+- Details: each input sits in a `relative` wrapper with the label after it
+  (`jump_label/1` now takes `placement: "inside" | "corner"`); the label has
+  `pointer-events: none`, so clicking it still focuses the input; inputs with a label get right
+  padding and no spinner arrows (they'd sit under the label; arrow keys still step the value).
+- Checked in the browser: all nine labels measured inside their input's box; a click on a label
+  focused the input; widths unchanged (112 px, buying power 195 px). 173 tests.
+
+### Open orders grouped by bracket (same evening)
+- **Asked for:** the take-profit and stop-loss of one exit strategy looked like loose rows;
+  show that they belong together.
+- **Built:** `Trading.open_order_groups/1` groups open orders by `parent_id` (exactly how OCO
+  finds a sibling) and loads each parent's fill (`preload(parent: :order)`). The card shows one
+  box per bracket: a coloured left edge (emerald long, amber short), a header ("SHORT 1 NVDA ·
+  filled at $187.57 · OCO", with a tooltip explaining one-cancels-other), and the exits as a small
+  price ladder: highest price on top, a dashed "now $187.57" line where the live price is, the
+  lower exit below. Exits always straddle the price (one past it would have filled), so "now"
+  lands between them. Each exit has a Take-profit/Stop-loss chip, then Move/Cancel. Entries still
+  waiting to fill get their own dashed "Waiting entry" box. A one-exit bracket has no OCO badge.
+- Move-box jump keys now follow the card's top-to-bottom order.
+- The first layout wrapped "cover 1 at $192.92" word by word in the half-width panel; each exit
+  now has two lines (chip + text, then Move/Cancel together).
+- **Checked:** unit test for the grouping (direction, fill price, exits highest first, waiting
+  entry last); LiveView test (both exits in one box with "short", "filled at", OCO, "now");
+  browser run with a long bracket, a short bracket and a waiting entry. 174 tests.
+
+### Apple-style scrollbars everywhere (same evening)
+- Thin (8 px) floating thumb, no arrows, no track; it shows only while that element scrolls
+  and hides ~0.9 s after scrolling stops. Applies to every scroller (watchlist, the three
+  portfolio panels, sidebar, page).
+- **CSS:** `::-webkit-scrollbar*` rules for Chrome/Edge/Safari; `scrollbar-width: thin` +
+  `scrollbar-color` for Firefox only (`@supports (-moz-appearance: none)`), because Chrome 121+
+  ignores the `-webkit-` rules as soon as the standard properties are set.
+- **JS:** one capturing `scroll` listener on `document` (scroll events don't bubble) adds
+  `.is-scrolling` to whatever is scrolling, removes it after 900 ms of quiet.
+- **LiveView catch:** the watchlist re-renders on every tick, and a patch would strip a class
+  added with `classList` mid-scroll (flicker). Adding it through `liveSocket.js().addClass`
+  makes it patch-aware: LiveView keeps classes set by JS commands across patches.
+- Checked in a real browser with headless scrollbars enabled: no class idle, held through ~2.5 s
+  of scrolling across several ticks, gone after; screenshots show the thumb only while
+  scrolling. 174 tests (CSS/JS only).
+
+### Order history shows how each order was placed (same evening)
+- **Asked for:** mark history entries that an exit strategy closed, so they aren't mistaken for
+  manual exits.
+- **Built:** a `via` column on orders (migration `20261108000100`): nil for a manual market
+  order; `"limit_entry"`, `"take_profit"` or `"stop_loss"` when a resting order filled, set inside
+  `fill_pending_order/2`'s transaction. History shows a chip after the line: **take-profit**
+  (green), **stop-loss** (red), **limit entry** (blue; a filled limit entry isn't manual either).
+- **Why a column and not a lookup:** the filled pending row does point at its order
+  (`pending.order_id`), but the save file only keeps open orders and their parents, so the label
+  would vanish after Download/Import. A column on the order travels with the order: the save
+  file now has `"via"` per order (optional, so older saves still load, as manual).
+- The React API lists order fields explicitly, so it's unchanged.
+- Confirmed the Apple-style scrollbar on the three portfolio panels too (it's global CSS):
+  the history panel scrolled, the thumb showed, then hid.
+- **Checked:** unit test (manual nil, limit entry, stop-loss), save-file round trip keeps
+  `via`, LiveView test (tags after the OCO take-profit; none on a manual buy), browser run (a
+  take-profit filled by the watcher shows "take-profit", its entry "limit entry", 12 manual buys
+  untagged). 175 tests.
+
+### Click an open order to see it on the chart; exit colours changed (same evening)
+- **Asked for:** clicking an open order focuses the chart on it with two dotted lines in the
+  order's accent colours; and green/red for take-profit/stop-loss clashed with colours already
+  in use (up/down candles, buy/sell, the last-price line).
+- **Colours:** take-profit **blue** (#3b82f6), stop-loss **orange** (#f97316), everywhere: the
+  Open orders chips, the history chips, and the chart lines. The "limit entry" history chip
+  became neutral grey so it can't be mistaken for take-profit blue.
+- **Built:** each open-order card has `phx-click="focus_order"` (its own buttons still work,
+  since LiveView runs only the nearest `phx-click`). The server charts the order's ticker and
+  pushes `"chart:lines"`: a bracket's exits (TP/SL), or a waiting entry's entry (grey) plus the
+  stop and take-profit it will open. The Chart hook draws them with `createPriceLine` (dotted,
+  2 px, price label on the axis) and widens the autoscale range (`autoscaleInfoProvider`) so the
+  lines are in view even when an exit is far from the recent candles: that's the "focus". The
+  focused card gets a ring; clicking it again clears. `refresh_focus/1` in `reload_trading/1`
+  keeps the lines in step: Move shifts a line, a fill or cancel that ends the group clears them;
+  picking another ticker clears too.
+- **Checked:** LiveView tests (lines with colours and titles, ring, chip colours, Move updates,
+  cancel down to one line then none, a waiting entry's three lines, another ticker clears; the
+  first version matched stale "clear" events from earlier selects, fixed by draining them).
+  Browser: chart switched AMD → NVDA, blue TP at $197.39 and orange SL at $182.35 drawn with
+  axis labels, both in view. 177 tests, two clean runs.
+
+### Scrollbar fades out instead of vanishing (same evening)
+- **Why it's not one line of CSS:** browsers don't run transitions on scrollbar
+  pseudo-elements, so `transition` on `::-webkit-scrollbar-thumb` does nothing.
+- **Trick:** a registered custom property, `@property --sb-thumb { syntax: "<color>" }`. A
+  registered property has a type, so the browser can animate it; the thumb paints
+  `var(--sb-thumb)` (Firefox: `scrollbar-color: var(--sb-thumb) transparent`). `.is-scrolling` sets
+  the colour with `transition-duration: 0s` (pops in); a permanent `.sb` class (added on first
+  scroll via `liveSocket.js()`) carries `transition: --sb-thumb 0.6s ease-out`, so when
+  `.is-scrolling` comes off the colour eases back to transparent. `* { --sb-thumb: transparent }`
+  gives every element its own value, so a scrolling page doesn't light up the panels inside it
+  through inheritance.
+- **Checked by measuring pixels**, since a screenshot can't show motion: a small PNG decoder in
+  the Playwright script read the thumb strip's darkest pixel: 177 while scrolling, 194 and 228
+  during the fade, 244 (background) after. A pop would go 177 → 244 in one step.
+
+### Deploy (2026-11-08, ~06:50 UTC): an OOM, a fix, live
+- Committed round two (`cc7d7df`), staged the Alpaca keys as Fly secrets straight from `.env`
+  (`fly secrets import --stage`, names only, never printed), and deployed.
+- **Production went down for about 3 minutes:** the new release was OOM-killed ~2 s after every
+  boot on the default 256 MB machine (`Out of memory: Killed process (beam.smp)`), so the smoke
+  check failed and the site returned 502. Cause: `Candles` fetched Alpaca's bar history at boot
+  and kept every decoded page (~40,000 bars across 4 pages) until the end. Fine on my laptop,
+  not on 256 MB.
+- **Fix (`2fcbf87`):** each page becomes compact candles, trimmed to 240 per ticker, before the
+  next page is fetched (5,000 bars a page), so only one page of raw JSON is alive at a time; the
+  first fetch waits 10 s after boot; the process garbage-collects after each refresh. Measured
+  locally: ~19 MB peak during the fetch, ~7 MB after. Redeployed: release v26, no OOM since.
+- **Verified on production:** the mock page creates a private portfolio (so the
+  `starting_cash_cents` migration ran) and a buy fills (so `orders.via` exists); autosave reaches
+  the browser; the live page has 50/50 tickers priced (Alpaca keys work) and real SIP candles;
+  `/api/stocks` and `/api/portfolio` (React) return 200. The smoke-test order was in a private
+  session portfolio, deleted when the tab closed; John's demo portfolio wasn't touched.
+- **Lesson:** "works on my machine" includes memory. A test can't catch an OOM; measuring the
+  peak (`:erlang.memory/1` while the fetch runs) and knowing the VM size can. Next time, measure
+  memory for anything that loads data at boot before deploying.
+- Merged `liveview` into `main`.

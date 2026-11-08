@@ -1,8 +1,9 @@
 defmodule StockFetcher.OrderWatcher do
   @moduledoc """
   Fills resting orders (step G: entries, stop-losses, take-profits) from a price stream. One instance per source:
-  `source: :live` listens to "stocks:live", `source: :mock` to "stocks:mock". A mock tick
-  therefore can never reach a live order, even though both streams use the same tickers.
+  `source: :live` listens to "stocks:live" (Finnhub) and "stocks:extra" (Alpaca), `source: :mock`
+  to "stocks:mock" and "stocks:mock:extra". A mock tick therefore can never reach a live order,
+  even though both streams use the same tickers.
 
   Why a supervised process and not `PricesLive`: a LiveView lives as long as its tab. A
   stop-loss has to work while John isn't looking.
@@ -26,8 +27,8 @@ defmodule StockFetcher.OrderWatcher do
   end
 
   @doc """
-  Options: `:source` (`:live` | `:mock`, required), `:topic` (default from the source; tests
-  pass their own), `:name`.
+  Options: `:source` (`:live` | `:mock`, required), `:topic` (one topic instead of the source's
+  defaults; tests pass their own), `:name`.
   """
   def start_link(opts) do
     source = Keyword.fetch!(opts, :source)
@@ -40,8 +41,8 @@ defmodule StockFetcher.OrderWatcher do
   @impl true
   def init(opts) do
     source = Keyword.fetch!(opts, :source)
-    topic = Keyword.get(opts, :topic, default_topic(source))
-    :ok = Phoenix.PubSub.subscribe(StockFetcher.PubSub, topic)
+    topics = if topic = opts[:topic], do: [topic], else: default_topics(source)
+    Enum.each(topics, &(:ok = Phoenix.PubSub.subscribe(StockFetcher.PubSub, &1)))
 
     # Stored as a string because that's how pending_orders.source is saved.
     {:ok, %{source: Atom.to_string(source)}}
@@ -105,6 +106,6 @@ defmodule StockFetcher.OrderWatcher do
     )
   end
 
-  defp default_topic(:live), do: "stocks:live"
-  defp default_topic(:mock), do: "stocks:mock"
+  defp default_topics(:live), do: ["stocks:live", "stocks:extra"]
+  defp default_topics(:mock), do: ["stocks:mock", "stocks:mock:extra"]
 end
