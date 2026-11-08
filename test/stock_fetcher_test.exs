@@ -6,7 +6,9 @@ defmodule StockFetcherTest do
   docker compose exec -e MIX_ENV=test stock_runner mix test
   """
 
-  use ExUnit.Case, async: true
+  # async: false: this module writes to SQLite, which has one write lock held by each test's
+  # sandbox transaction until it ends; async writers time out with "Database busy".
+  use ExUnit.Case, async: false
 
   alias StockFetcher.{Repo, StockPrice}
 
@@ -109,6 +111,24 @@ defmodule StockFetcherTest do
       assert deleted_count == 1
       assert Repo.get(StockPrice, old_price.id) == nil
       assert Repo.get(StockPrice, recent_price.id) != nil
+    end
+  end
+
+  describe "latest_prices/0" do
+    test "returns only the newest row per ticker" do
+      {:ok, _} = StockFetcher.save_price("AAPL", 100.0)
+      {:ok, _} = StockFetcher.save_price("AAPL", 101.0)
+      {:ok, _} = StockFetcher.save_price("MSFT", 400.0)
+
+      result = StockFetcher.latest_prices()
+      assert length(result) == 2
+      assert Enum.map(result, & &1.ticker) == ["AAPL", "MSFT"]
+      assert Enum.find(result, &(&1.ticker == "AAPL")).price == 101.0
+    end
+
+    test "returns [] when there are no prices" do
+      result = StockFetcher.latest_prices()
+      assert result == []
     end
   end
 end

@@ -50,3 +50,7 @@ stock_prices.txt
 # Ignore any SQLite data directory root modifications (if applicable)
 /sqlite_data/*:Zone.Identifier
 /sqlite_data/
+
+# Built CSS/JS (mix assets.build / assets.deploy)
+/priv/static/assets/
+/priv/static/cache_manifest.json

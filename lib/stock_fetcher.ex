@@ -141,6 +141,50 @@ defmodule StockFetcher do
     |> LTTB.downsample(target_points)
   end
 
+  @doc """
+  Returns the newest `%StockPrice{}` for every ticker in the table, with no time cutoff,
+  so it still works on weekends. Sorted by ticker.
+  """
+  @spec latest_prices() :: [StockPrice.t()]
+  def latest_prices do
+    latest_ids =
+      from(s in StockPrice,
+        group_by: s.ticker,
+        select: max(s.id)
+      )
+
+    Repo.all(
+      from(s in StockPrice,
+        where: s.id in subquery(latest_ids),
+        order_by: s.ticker
+      )
+    )
+  end
+
+  @doc """
+  The newest saved price (dollars, float) for `ticker`, or `nil` if it has none.
+
+  Used to price orders that arrive over the JSON API. Every `"stocks:live"` broadcast is sent
+  only after `save_price/2` inserted that price, and the React SPA's prices come from those
+  broadcasts plus `GET /api/stocks` (also this table), so the newest row is the newest price
+  the client can have been shown. Mock prices are never saved, so they can't be traded here.
+  """
+  @spec latest_price(term()) :: float() | nil
+  def latest_price(ticker) when is_binary(ticker) do
+    ticker = ticker |> String.trim() |> String.upcase()
+
+    Repo.one(
+      from(s in StockPrice,
+        where: s.ticker == ^ticker,
+        order_by: [desc: s.id],
+        limit: 1,
+        select: s.price
+      )
+    )
+  end
+
+  def latest_price(_), do: nil
+
   def get_hydrated_watchlist(watchlist \\ @stocks) do
     Map.new(watchlist, fn ticker ->
       {ticker, get_hydrated_prices(ticker)}

@@ -1,5 +1,7 @@
 defmodule StockFetcherWeb.StockControllerTest do
-  use StockFetcherWeb.ConnCase, async: true
+  # async: false: this module writes to SQLite, which has one write lock held by each test's
+  # sandbox transaction until it ends; async writers time out with "Database busy".
+  use StockFetcherWeb.ConnCase, async: false
 
   alias StockFetcher.{MarketHours, Repo, StockPrice}
 

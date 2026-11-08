@@ -18,7 +18,29 @@ config :stock_fetcher, StockFetcherWeb.Endpoint,
     formats: [json: StockFetcherWeb.ErrorJSON],
     accepts: ~w(json)
   ],
-  pubsub_server: StockFetcher.PubSub
+  pubsub_server: StockFetcher.PubSub,
+  live_view: [signing_salt: "KolMj9f6"]
+
+# JS bundler: assets/js/app.js -> priv/static/assets/js/app.js.
+# NODE_PATH lets `import "phoenix_live_view"` resolve to the Hex package's JS in deps/.
+config :esbuild,
+  version: "0.25.0",
+  stock_fetcher: [
+    args: ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js),
+    cd: Path.expand("../assets", __DIR__),
+    env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
+  ]
+
+# Tailwind v4: no tailwind.config.js; configuration lives in assets/css/app.css.
+config :tailwind,
+  version: "4.3.0",
+  stock_fetcher: [
+    args: ~w(
+      --input=assets/css/app.css
+      --output=priv/static/assets/css/app.css
+    ),
+    cd: Path.expand("..", __DIR__)
+  ]
 
 config :hammer,
   backend: {Hammer.Backend.ETS, [expiry_ms: 60_000 * 60, cleanup_interval_ms: 60_000 * 10]}

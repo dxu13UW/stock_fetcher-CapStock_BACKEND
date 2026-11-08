@@ -7,6 +7,8 @@ defmodule StockFetcher.StockPrice do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   @derive {Jason.Encoder, only: [:id, :ticker, :price, :inserted_at]}
   schema "stock_prices" do
     field(:ticker, :string)

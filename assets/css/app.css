@@ -1,0 +1,22 @@
+/* Tailwind v4: configuration lives here, not in tailwind.config.js.
+   source(none) + @source limits class scanning to these folders
+   (paths are relative to this file). */
+@import "tailwindcss" source(none);
+@source "../css";
+@source "../js";
+@source "../../lib/stock_fetcher_web";
+
+/* Lets you style elements while a LiveView event is in flight,
+   e.g. class="phx-submit-loading:opacity-50" on a form button. */
+@custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
+@custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
+@custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+/* Dark mode follows <html data-theme="dark">, set by the toggle (root layout + app.js),
+   instead of Tailwind's default of following the OS setting only. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Native controls (select, number input, scrollbars) switch to their dark look too. */
+[data-theme=dark] {
+  color-scheme: dark;
+}

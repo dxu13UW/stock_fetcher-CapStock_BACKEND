@@ -8,6 +8,7 @@ defmodule StockFetcher.MixProject do
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      aliases: aliases(),
       deps: deps()
     ]
   end
@@ -31,6 +32,12 @@ defmodule StockFetcher.MixProject do
       {:ecto_sqlite3, "~> 0.17"},
       {:plug, "~> 1.0"},
       {:phoenix, "~> 1.7.10"},
+      {:phoenix_html, "~> 4.1"},
+      {:phoenix_live_view, "~> 1.2"},
+      {:phoenix_live_reload, "~> 1.2", only: :dev},
+      {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.5", runtime: Mix.env() == :dev},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:phoenix_ecto, "~> 4.4"},
       {:cors_plug, "~> 3.0"},
       {:phoenix_pubsub, "~> 2.1"},
@@ -39,6 +46,21 @@ defmodule StockFetcher.MixProject do
       {:tz, "~> 0.26"},
       {:hammer, "~> 6.1"},
       {:corsica, "~> 2.1"}
+    ]
+  end
+
+  # Asset build steps. `assets.deploy` runs in the Dockerfile before `mix release`.
+  defp aliases do
+    [
+      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
+      "assets.build": ["tailwind stock_fetcher", "esbuild stock_fetcher"],
+      "assets.deploy": [
+        "tailwind stock_fetcher --minify",
+        "esbuild stock_fetcher --minify",
+        "phx.digest"
+      ],
+      # Keep the test DB's schema current (new migrations, e.g. the trading tables).
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]
   end
 end
