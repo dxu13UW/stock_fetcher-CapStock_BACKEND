@@ -176,7 +176,7 @@ mix phx.server                   # http://localhost:4000/prices?source=mock
 ```zsh
 mix format
 mix compile --warnings-as-errors
-mix test                         # 178 tests
+mix test                         # 181 tests
 ```
 
 ## Deploying (Fly.io)
@@ -190,6 +190,9 @@ fly deploy
   on boot.
 - Production is a single machine with SQLite on a volume. The default machine is 256 MB, so
   measure the memory of anything that loads data at boot.
+- **Abuse guards:** connection limits at Fly's proxy (`fly.toml`), per-IP connection and per-tab
+  event limits in the LiveView, WebSocket frame caps, a memory ceiling per LiveView process, and
+  per-IP rate limits on the JSON API.
 
 ---
 

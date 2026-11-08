@@ -105,19 +105,96 @@ defmodule StockFetcherWeb.PricesLive do
         undo: nil
       )
 
-    if connected?(socket) do
-      Enum.each(topics(source), &Phoenix.PubSub.subscribe(StockFetcher.PubSub, &1))
+    cond do
+      not connected?(socket) ->
+        {:ok, socket}
 
-      {portfolio, message} = start_portfolio(source, get_connect_params(socket)["save"])
+      # Too many new connections from one IP: show prices' first render, but no live process
+      # work (no subscriptions, no portfolio row). See guard_process/1 and connection_allowed?/1.
+      not connection_allowed?(socket) ->
+        {:ok,
+         assign(socket,
+           message:
+             {:error, "Too many connections from your network. Wait a minute, then reload."}
+         )}
 
-      {:ok,
-       socket
-       |> use_portfolio(portfolio)
-       |> assign(message: message)
-       |> push_chart()}
-    else
-      {:ok, socket}
+      true ->
+        guard_process()
+        Enum.each(topics(source), &Phoenix.PubSub.subscribe(StockFetcher.PubSub, &1))
+
+        {portfolio, message} = start_portfolio(source, get_connect_params(socket)["save"])
+
+        {:ok,
+         socket
+         |> use_portfolio(portfolio)
+         |> assign(message: message)
+         |> attach_hook(:event_rate_limit, :handle_event, &limit_events/3)
+         |> push_chart()}
     end
+  end
+
+  # --- Abuse and memory guards (2026-11-08) ---
+  # Every connected tab is a process on a small (256 MB) machine. Three guards, plus the
+  # connection limits in fly.toml and the frame-size caps in endpoint.ex:
+
+  # 1. A memory ceiling for this process. A runaway tab (e.g. a huge decoded message) is killed
+  #    alone instead of growing until the whole VM is OOM-killed. Normal use is well under 1 MB;
+  #    importing a 1 MB save peaks at a few MB. The janitor then deletes its portfolio and the
+  #    browser reconnects and restores from its autosave. (Counts the process heap; large binaries
+  #    live off-heap and are capped by the socket's frame size.)
+  @max_heap_words div(50_000_000, :erlang.system_info(:wordsize))
+
+  defp guard_process do
+    Process.flag(:max_heap_size, %{size: @max_heap_words, kill: true, error_logger: true})
+  end
+
+  # 2. New LiveView connections per client IP per minute (Hammer, one ETS row per IP per minute).
+  #    Behind Fly the IP is the Fly-Client-IP header, which Fly's proxy sets; locally, the peer.
+  #    Generous enough for one person's tabs and reconnects after a deploy.
+  defp connection_allowed?(socket) do
+    limit = Application.get_env(:stock_fetcher, :lv_connections_per_minute, 30)
+
+    match?(
+      {:allow, _},
+      Hammer.check_rate("lv_connect:#{client_ip(socket)}", 60_000, limit)
+    )
+  end
+
+  defp client_ip(socket) do
+    fly_ip =
+      Enum.find_value(get_connect_info(socket, :x_headers) || [], fn
+        {"fly-client-ip", ip} -> ip
+        _ -> nil
+      end)
+
+    case {fly_ip, get_connect_info(socket, :peer_data)} do
+      {ip, _} when is_binary(ip) -> ip
+      {nil, %{address: address}} -> address |> :inet.ntoa() |> to_string()
+      _ -> "unknown"
+    end
+  end
+
+  # 3. Events per tab per second. Kept in this process's own dictionary, not a shared table: it
+  #    costs nothing and disappears with the tab. A real user, even typing (debounced 250 ms) and
+  #    clicking fast, stays far below; a script sending orders or imports in a loop is cut off.
+  #    The JSON API has its own per-IP limits (HydrationLimiter).
+  defp limit_events(_event, _params, socket) do
+    limit = Application.get_env(:stock_fetcher, :lv_events_per_second, 20)
+    now = System.monotonic_time(:second)
+
+    count =
+      case Process.get(:event_window) do
+        {^now, n} -> n + 1
+        _ -> 1
+      end
+
+    Process.put(:event_window, {now, count})
+
+    if count > limit,
+      do:
+        {:halt,
+         assign(socket, message: {:error, "Too many actions at once. Slow down a little."})},
+      else: {:cont, socket}
   end
 
   defp topics(:live), do: ["stocks:live", "stocks:extra"]

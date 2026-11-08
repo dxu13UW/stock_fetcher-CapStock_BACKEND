@@ -26,3 +26,6 @@ config :stock_fetcher, :enable_order_watchers, false
 config :stock_fetcher, :enable_alpaca_poller, false
 config :stock_fetcher, :enable_session_janitor, false
 config :stock_fetcher, :enable_candle_bars, false
+# The LiveView tests open many connections from 127.0.0.1 within a minute; don't rate-limit them
+# (the guard has its own test, which sets a low limit).
+config :stock_fetcher, :lv_connections_per_minute, 1_000_000
