@@ -620,6 +620,17 @@ defmodule StockFetcherWeb.PricesLive do
               <span id="chart-price" class="ml-auto font-semibold tabular-nums">
                 {price_text(@prices[@selected])}
               </span>
+              <%!-- Back to the automatic view after panning/zooming. Runs in the browser:
+                   JS.dispatch fires a DOM event the Chart hook listens for, no server round trip. --%>
+              <button
+                id="chart-reset"
+                type="button"
+                phx-click={JS.dispatch("chart:reset", to: "#chart")}
+                title="Reset the chart to the automatic view (fit all candles, auto-scale prices)"
+                class="btn-outline self-center"
+              >
+                ⟲ Reset view
+              </button>
             </div>
             <p class="text-xs text-zinc-500 dark:text-zinc-400">
               {chart_caption(@source)} · times in <.time_zone id="tz-chart" />
@@ -793,7 +804,7 @@ defmodule StockFetcherWeb.PricesLive do
               </table>
             </section>
 
-            <section id="open-orders-panel" class="panel">
+            <section id="open-orders-panel" phx-hook="MoveKeys" class="panel">
               <h2 class="font-semibold">Open orders</h2>
               <p :if={@pending == []} class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">No open orders.</p>
               <%!-- One card per bracket (an entry's exits, which cancel each other: OCO), as a
@@ -856,10 +867,11 @@ defmodule StockFetcherWeb.PricesLive do
                                 required
                                 placeholder={dollars(item.trigger_cents)}
                                 aria-label="New price"
-                                data-jump={move_key(@order_groups, item)}
                                 class="input num-input"
                               />
-                              <.jump_label key={move_key(@order_groups, item)} />
+                              <%!-- Empty slot: the MoveKeys hook gives a letter (and the input's
+                                   data-jump) only to Move boxes visible right now. --%>
+                              <span class="jump-label jump-label-inside move-label" aria-hidden="true"></span>
                             </span>
                             <button type="submit" class="btn-outline">Move</button>
                           </form>
@@ -890,11 +902,8 @@ defmodule StockFetcherWeb.PricesLive do
                 <li :for={order <- @orders} id={"order-#{order.id}"}>
                   <.local_time id={"order-time-#{order.id}"} at={order.inserted_at} /> {String.upcase(order.side)} {order.quantity} {order.ticker}
                   @ {format_cents(order.price_cents)} ({format_cents(order.total_cents)})
-                  <%!-- Filled by a resting order, not a manual click: say which. --%>
-                  <span
-                    :if={order.via}
-                    class={["ml-1 rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap", via_chip(order.via)]}
-                  >
+                  <%!-- How it was placed: a manual click, or which resting order filled it. --%>
+                  <span class={["ml-1 rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap", via_chip(order.via)]}>
                     {via_name(order.via)}
                   </span>
                 </li>
@@ -1121,7 +1130,8 @@ defmodule StockFetcherWeb.PricesLive do
         <p>
           <strong>Keyboard.</strong>
           <kbd>/</kbd> searches the watchlist; press a result's pink letter to pick it. When you're
-          not typing, every number box shows a pink letter: press it to jump there. The closed exit
+          not typing, every number box shows a small key at its right end, like the
+          <kbd>/</kbd> in the search box: press that letter to jump there. The closed exit
           strategies show one too (<kbd>a</kbd> <kbd>d</kbd> <kbd>f</kbd> <kbd>g</kbd>): press it to
           open that panel. <kbd>Esc</kbd> leaves a box. Enter never places an order: order buttons
           always take a click.
@@ -1181,9 +1191,9 @@ defmodule StockFetcherWeb.PricesLive do
   # Fixed letters for fixed inputs, so they become muscle memory: b = Buy/Sell quantity,
   # s = Short quantity, q/e/x/t = exit panel quantity/entry/stop-loss (x: cut it)/take-profit
   # (only one panel is open, so they never clash), n = new portfolio, a/d/f/g = the closed exit
-  # panels. The Move boxes get @move_keys in order. No "l" or "i": in many fonts they look alike
-  # (or like 1).
-  @move_keys ~w(h j k m o p r u v w y z c)
+  # panels. The Move boxes in Open orders get theirs in the browser (MoveKeys hook in app.js),
+  # only while visible, so a long list never runs out of letters. No "l" or "i": in many fonts
+  # they look alike (or like 1).
 
   attr :key, :string, default: nil
   # "inside": in the input's right end, like the watchlist filter's [/] (put it right after the
@@ -1194,15 +1204,6 @@ defmodule StockFetcherWeb.PricesLive do
     ~H"""
     <span :if={@key} class={["jump-label", "jump-label-#{@placement}"]} aria-hidden="true">{@key}</span>
     """
-  end
-
-  # The jump key for an exit's Move box: the next free letter, in the order the Open orders card
-  # shows them (top to bottom). Waiting entries have no Move box. nil past the 13th exit.
-  defp move_key(groups, order) do
-    groups
-    |> Enum.flat_map(fn g -> if g.kind == :bracket, do: g.exits, else: [] end)
-    |> Enum.find_index(&(&1.id == order.id))
-    |> then(&(&1 && Enum.at(@move_keys, &1)))
   end
 
   # A bracket's exits, highest price first, with :now where the live price falls between them.
@@ -1218,6 +1219,8 @@ defmodule StockFetcherWeb.PricesLive do
   defp via_name("stop_loss"), do: "stop-loss"
   defp via_name("take_profit"), do: "take-profit"
   defp via_name("limit_entry"), do: "limit entry"
+  # "manual", or nil on orders from before the column existed.
+  defp via_name(_manual), do: "manual"
 
   # Same colours as the Open orders chips and chart lines; a limit entry is neutral grey.
   defp via_chip("stop_loss"), do: exit_chip(%{type: "stop"})
@@ -1225,6 +1228,10 @@ defmodule StockFetcherWeb.PricesLive do
 
   defp via_chip("limit_entry"),
     do: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+
+  # The most common tag, so the quietest: outlined, no fill.
+  defp via_chip(_manual),
+    do: "border border-zinc-300 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400"
 
   defp exit_name(%{type: "stop"}), do: "Stop-loss"
   defp exit_name(_take_profit), do: "Take-profit"

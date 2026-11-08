@@ -74,7 +74,8 @@ defmodule StockFetcherWeb.PricesLiveTest do
       assert has_element?(view, "#cash", "$99,970.00")
       assert has_element?(view, "#position-ZZBUY", "3")
       assert has_element?(view, "#orders", "BUY 3 ZZBUY")
-      # A manual market order gets no "via" tag.
+      # A manual market order is tagged "manual", not with a resting-order tag.
+      assert has_element?(view, "#orders li span", "manual")
       refute has_element?(view, "#orders li span", "limit entry")
       refute has_element?(view, "#orders li span", "stop-loss")
     end
@@ -610,16 +611,17 @@ defmodule StockFetcherWeb.PricesLiveTest do
       refute has_element?(view, ~s|[data-jump="l"]|)
       refute has_element?(view, ~s|[data-jump="i"]|)
 
-      # A filled bracket opens two exits: their Move boxes get h and j (a d f g are the panels).
+      # A filled bracket opens two exits. Their Move boxes get letters in the browser (MoveKeys
+      # hook, only while visible), so the server renders an empty slot and no data-jump.
       select(view, "ZZJ")
 
       view
       |> form("#exit-form-long_sl", %{quantity: "1", limit: "105", stop: "90", take_profit: "120"})
       |> render_submit()
 
-      assert has_element?(view, ~s|#open-orders input[name=trigger][data-jump="h"]|)
-      assert has_element?(view, ~s|#open-orders input[name=trigger][data-jump="j"]|)
-      assert has_element?(view, "#open-orders .jump-label", "h")
+      assert has_element?(view, "#open-orders-panel[phx-hook=MoveKeys]")
+      assert has_element?(view, "#open-orders input[name=trigger] + .move-label")
+      refute has_element?(view, "#open-orders input[name=trigger][data-jump]")
 
       # Opening another panel moves the label: Long · stop-loss gets "d" back.
       view |> element("#panel-short_tp button[phx-click=toggle_panel]") |> render_click()
@@ -702,6 +704,15 @@ defmodule StockFetcherWeb.PricesLiveTest do
 
       select(view, "AAPL")
       assert_push_event(view, "chart:lines", %{lines: []})
+    end
+
+    test "the chart has a Reset view button that dispatches to the Chart hook", %{conn: conn} do
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+      html = view |> element("#chart-reset") |> render()
+      # A client-side JS command (no server event): it dispatches chart:reset to #chart.
+      assert html =~ "chart:reset"
+      assert html =~ "#chart"
+      refute html =~ ~s(phx-click="reset)
     end
 
     test "the help panel is on the page, hidden until the button shows it", %{conn: conn} do

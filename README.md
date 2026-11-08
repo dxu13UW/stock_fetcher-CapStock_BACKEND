@@ -47,12 +47,14 @@ and an existing **React SPA**, and both were measured against each other on iden
 - **Candlestick chart:** 5-minute candles from Alpaca's full-market (SIP) history plus live ticks;
   1-minute candles on the mock stream. Times in the viewer's own time zone (PST, CST, …).
 - **Click an open order** to draw its take-profit (blue) and stop-loss (orange) on the chart.
+- **⟲ Reset view** returns the chart to automatic after you pan or zoom.
 
 ### Learn and plan
 - **Exit-strategy sidebar:** Long/Short × take-profit/stop-loss, each with a goal/how/why
   tutorial, example prices and a **risk preview** (position size, $ and % at risk, target, R:R).
 - **Open orders grouped by bracket**, as a small price ladder with the live price between the
-  exits. **Order history** marks fills made by a take-profit, stop-loss or limit entry.
+  exits. **Order history** tags how each order was placed: manual, take-profit, stop-loss or
+  limit entry.
 - A **"How paper trading works"** panel.
 
 ### Keyboard first
@@ -174,7 +176,7 @@ mix phx.server                   # http://localhost:4000/prices?source=mock
 ```zsh
 mix format
 mix compile --warnings-as-errors
-mix test                         # 177 tests
+mix test                         # 178 tests
 ```
 
 ## Deploying (Fly.io)

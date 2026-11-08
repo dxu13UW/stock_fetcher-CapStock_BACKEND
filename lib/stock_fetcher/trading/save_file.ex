@@ -36,7 +36,7 @@ defmodule StockFetcher.Trading.SaveFile do
   @max_orders 10_000
   @max_open 500
 
-  @vias ["limit_entry", "take_profit", "stop_loss"]
+  @vias ["manual", "limit_entry", "take_profit", "stop_loss"]
 
   def max_bytes, do: @max_bytes
 
@@ -226,7 +226,7 @@ defmodule StockFetcher.Trading.SaveFile do
   defp order(%{"ticker" => t, "side" => side, "quantity" => q, "price_cents" => p} = o)
        when side in ["buy", "sell", "short", "cover"] and is_integer(q) and q > 0 and
               is_integer(p) and p > 0 and is_integer(:erlang.map_get("total_cents", o)) do
-    # "via" is optional: saves from before it existed load as manual orders.
+    # "via" is optional: saves from before it existed (nil) load as manual orders.
     with true <- Tickers.known?(t),
          {:ok, at} <- parse_time(o["at"]),
          true <- o["via"] in [nil | @vias] do
@@ -237,7 +237,7 @@ defmodule StockFetcher.Trading.SaveFile do
          quantity: q,
          price_cents: p,
          total_cents: o["total_cents"],
-         via: o["via"],
+         via: o["via"] || "manual",
          inserted_at: at
        }}
     else

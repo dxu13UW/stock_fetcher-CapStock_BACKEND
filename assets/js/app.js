@@ -107,6 +107,14 @@ const Chart = {
       if (lines.length) this.chart.timeScale().scrollToRealTime()
     })
 
+    // "Reset view" (JS.dispatch from the button): the same view the chart opens with. Panning or
+    // zooming changes the time range, and dragging the price axis turns auto-scale off; this
+    // undoes both. Order lines stay, and the autoscale provider keeps them in view.
+    this.el.addEventListener("chart:reset", () => {
+      this.chart.priceScale("right").applyOptions({autoScale: true})
+      this.chart.timeScale().fitContent()
+    })
+
     this.handleEvent("chart:data", ({interval, candles}) => {
       this.interval = interval
       const data = candles.map((c) => ({...c, time: localTime(c.time)}))
@@ -339,11 +347,63 @@ window.addEventListener("keydown", (e) => {
   }
 })
 
+// Jump keys for the Move boxes in Open orders, given only to the boxes you can see right now.
+// A fixed letter per order would run out once the list is long, and letters on boxes scrolled
+// out of sight are useless anyway. So on every scroll, resize or change to the list, the
+// visible Move boxes get letters from MOVE_KEYS in top-to-bottom order and the rest lose theirs.
+// The letters go on through liveSocket.js().setAttribute, which LiveView keeps across patches
+// (the card re-renders as prices tick). The global keydown handler above then finds them by
+// data-jump like any other input; the label shows the letter via CSS attr(data-key).
+const MOVE_KEYS = "hjkmoprvwyzcu" // not used by the fixed keys (b s q e x t n, a d f g); no l or i
+
+const MoveKeys = {
+  mounted() {
+    this.queued = false
+    this.schedule = () => {
+      if (this.queued) return
+      this.queued = true
+      requestAnimationFrame(() => { this.queued = false; this.assign() })
+    }
+    this.el.addEventListener("scroll", this.schedule, {passive: true})
+    window.addEventListener("scroll", this.schedule, {passive: true})
+    window.addEventListener("resize", this.schedule)
+    // New, filled or cancelled orders change the list.
+    this.observer = new MutationObserver(this.schedule)
+    this.observer.observe(this.el, {childList: true, subtree: true})
+    this.schedule()
+  },
+  destroyed() {
+    window.removeEventListener("scroll", this.schedule)
+    window.removeEventListener("resize", this.schedule)
+    this.observer?.disconnect()
+  },
+  assign() {
+    const js = liveSocket.js()
+    const box = this.el.getBoundingClientRect()
+    const top = Math.max(box.top, 0)
+    const bottom = Math.min(box.bottom, window.innerHeight)
+    let next = 0
+    for (const input of this.el.querySelectorAll("input[name=trigger]")) {
+      const label = input.parentElement.querySelector(".move-label")
+      const r = input.getBoundingClientRect()
+      const visible = r.height > 0 && r.top >= top && r.bottom <= bottom
+      const key = visible && next < MOVE_KEYS.length ? MOVE_KEYS[next++] : null
+      if (key) {
+        if (input.getAttribute("data-jump") !== key) js.setAttribute(input, "data-jump", key)
+        if (label && label.getAttribute("data-key") !== key) js.setAttribute(label, "data-key", key)
+      } else {
+        if (input.hasAttribute("data-jump")) js.removeAttribute(input, "data-jump")
+        if (label?.hasAttribute("data-key")) js.removeAttribute(label, "data-key")
+      }
+    }
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   // A function, so it runs on every (re)connect: a new LiveView process gets the latest
   // autosave and restores the portfolio in mount, before the first render.
   params: () => ({_csrf_token: csrfToken, save: storage.get(saveKey(pageSource()))}),
-  hooks: {LocalTime, TimeZone, Chart, SaveFile, Flash}
+  hooks: {LocalTime, TimeZone, Chart, SaveFile, Flash, MoveKeys}
 })
 
 liveSocket.connect()

@@ -89,6 +89,14 @@
 [data-jump-on] .jump-label {
   display: inline-block;
 }
+/* Move-box labels get their letter in the browser (MoveKeys hook) only while visible; an empty
+   one stays hidden. */
+.move-label::before {
+  content: attr(data-key);
+}
+[data-jump-on] .move-label:not([data-key]) {
+  display: none;
+}
 
 /* Inputs with an inside label: room for it, and no spinner arrows (they'd sit under the label;
    the arrow keys still step the value). */

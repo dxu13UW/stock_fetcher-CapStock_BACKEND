@@ -291,7 +291,8 @@ React SPA and the benchmark panel are unchanged).
 - **Data:** 50 tickers (`Tickers`); an Alpaca poller for 45 of them on a separate topic
   (`stocks:extra`, so React keeps its 5; not saved to the table React reads); a second mock
   streamer; `OrderWatcher` on both topics.
-- **Chart:** a `Candles` cache per source (SIP 5-minute history plus live ticks; made-up mock
+- **Chart:** a "⟲ Reset view" button (client-only `JS.dispatch` to the hook: auto-scale back on,
+  fit all candles) for after panning and zooming; a `Candles` cache per source (SIP 5-minute history plus live ticks; made-up mock
   history), drawn by a vendored Lightweight Charts in a hook behind `phx-update="ignore"`. One
   cache for every tab, so no per-user API calls.
 - **Private portfolios:** `SessionJanitor` monitors each tab's process and deletes its portfolio
@@ -308,12 +309,14 @@ React SPA and the benchmark panel are unchanged).
   - ticker dropdowns replaced by the watchlist selection, shown as a chip, and every button
     names its ticker;
   - fixed **jump keys** inside each number input (b, s, q, e, x, t, n; never `l`/`i`), and a/d/f/g
-    on the closed exit panels;
+    on the closed exit panels; the Move boxes in Open orders get letters only while visible
+    (assigned in the browser on scroll, so a long list never runs out of keys);
   - **Enter never submits** (found: Enter in a quantity box would have pressed Buy).
 - **Open orders:** grouped by bracket (by `parent_id`, exactly how OCO finds siblings) with a live
   price ladder. Click one to draw dotted lines on the chart (**blue take-profit, orange
-  stop-loss**: green and red already mean up/down and buy/sell). History tags automatic fills
-  (`orders.via`: take-profit, stop-loss, limit entry), kept in the save file.
+  stop-loss**: green and red already mean up/down and buy/sell). History tags how every order
+  was placed (`orders.via`: manual, take-profit, stop-loss, limit entry; "manual" is stored as the
+  default, older rows show as manual), kept in the save file.
 - **Polish:** jump labels restyled as quiet keycaps like the filter's `[/]` (the bright pink was
   too loud in dark mode; pink stays for the flash labels, softened in dark mode);
   viewer's time-zone label (PST, CST…); equal input sizes; three portfolio panels;

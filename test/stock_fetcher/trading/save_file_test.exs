@@ -64,7 +64,7 @@ defmodule StockFetcher.Trading.SaveFileTest do
     end
 
     assert {"NVDA", "limit_entry"} in vias.(restored.id)
-    assert {"AAPL", nil} in vias.(restored.id)
+    assert {"AAPL", "manual"} in vias.(restored.id)
     assert {"NVDA", "take_profit"} in vias.(restored.id)
   end
 

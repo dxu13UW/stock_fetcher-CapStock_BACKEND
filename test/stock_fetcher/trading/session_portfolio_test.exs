@@ -122,7 +122,7 @@ defmodule StockFetcher.Trading.SessionPortfolioTest do
     {:ok, %{order: manual}} =
       Trading.place_market_order(p.id, "buy", "AAPL", 1, 10.0, source: :mock)
 
-    assert manual.via == nil
+    assert manual.via == "manual"
 
     {:ok, :placed, entry} =
       Trading.place_limit_order(p.id, "NVDA", 1, "190", "180",
