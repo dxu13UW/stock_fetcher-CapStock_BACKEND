@@ -1281,3 +1281,25 @@ in production (different `secret_key_base`). Throttled latency and browser CPU s
 - **Checked by measuring pixels**, since a screenshot can't show motion: a small PNG decoder in
   the Playwright script read the thumb strip's darkest pixel: 177 while scrolling, 194 and 228
   during the fade, 244 (background) after. A pop would go 177 → 244 in one step.
+
+### Deploy (2026-11-08, ~06:50 UTC): an OOM, a fix, live
+- Committed round two (`cc7d7df`), staged the Alpaca keys as Fly secrets straight from `.env`
+  (`fly secrets import --stage`, names only, never printed), and deployed.
+- **Production went down for about 3 minutes:** the new release was OOM-killed ~2 s after every
+  boot on the default 256 MB machine (`Out of memory: Killed process (beam.smp)`), so the smoke
+  check failed and the site returned 502. Cause: `Candles` fetched Alpaca's bar history at boot
+  and kept every decoded page (~40,000 bars across 4 pages) until the end. Fine on my laptop,
+  not on 256 MB.
+- **Fix (`2fcbf87`):** each page becomes compact candles, trimmed to 240 per ticker, before the
+  next page is fetched (5,000 bars a page), so only one page of raw JSON is alive at a time; the
+  first fetch waits 10 s after boot; the process garbage-collects after each refresh. Measured
+  locally: ~19 MB peak during the fetch, ~7 MB after. Redeployed: release v26, no OOM since.
+- **Verified on production:** the mock page creates a private portfolio (so the
+  `starting_cash_cents` migration ran) and a buy fills (so `orders.via` exists); autosave reaches
+  the browser; the live page has 50/50 tickers priced (Alpaca keys work) and real SIP candles;
+  `/api/stocks` and `/api/portfolio` (React) return 200. The smoke-test order was in a private
+  session portfolio, deleted when the tab closed; John's demo portfolio wasn't touched.
+- **Lesson:** "works on my machine" includes memory. A test can't catch an OOM; measuring the
+  peak (`:erlang.memory/1` while the fetch runs) and knowing the VM size can. Next time, measure
+  memory for anything that loads data at boot before deploying.
+- Merged `liveview` into `main`.
