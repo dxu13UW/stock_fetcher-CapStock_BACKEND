@@ -384,3 +384,19 @@ origin checks. Missing: anything limiting LiveView, where every open tab is a se
   LiveView's long-poll fallback isn't frame-capped (bodies go through Plug's 8 MB default).
 - **LiveView vs React:** a static React frontend on a CDN can't be flooded this way, only its API.
   LiveView's per-visitor processes make connection limits a must, not a nice-to-have.
+
+### Bug: a flash label key also fired a jump key (2026-11-08)
+- **Found by me:** in the watchlist filter, typing `b` then `s` jumped to a ticker *and* put the
+  cursor in the Short quantity box.
+- **Cause:** one key press was handled twice. The filter's handler saw `s` (a flash label for BA),
+  jumped, cleared and blurred the filter; the same event then bubbled to the page-wide jump-key
+  listener, which saw that nothing was focused any more and jumped to the box labelled `s`. Any
+  flash label that is also a jump key (b s q e x t n a d f g, Move-box letters) could do it.
+- **Fix:** the filter claims the keys it acts on (`preventDefault` + `stopImmediatePropagation`),
+  and the jump-key listener ignores keys another handler already claimed (`e.defaultPrevented`).
+- **Checked** in the browser: `/`, `b`, then each of 24 letters: focus never landed in a number
+  box. A label letter (`s` → BA) charts its row; a non-label letter types ("bz" → "No ticker
+  matches"). Kept flash.nvim's behaviour on purpose: a non-continuing letter that labels a result
+  jumps rather than types.
+- **Lesson:** two listeners for the same key need an owner. Whoever acts on a key should mark
+  it handled, and everyone else should check.

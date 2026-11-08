@@ -266,14 +266,20 @@ const Flash = {
     this.style.textContent = rules.join("\n")
   },
 
+  // A key this handler acts on is "claimed": preventDefault + stopImmediatePropagation, so the
+  // page-wide jump-key listener never sees it. Without that, a label like "s" would jump to its
+  // row, blur the filter, and then the same key press would reach the jump-key listener, which
+  // (no longer "typing") focused the Short quantity box (bug found 2026-11-08).
   onKey(e) {
+    const claim = () => { e.preventDefault(); e.stopImmediatePropagation() }
     if (e.key === "Escape") {
+      claim()
       this.clear()
       this.input.blur()
       return
     }
     if (e.key === "Enter") {
-      e.preventDefault()
+      claim()
       if (this.matches[0]) this.jump(this.matches[0].ticker)
       return
     }
@@ -281,7 +287,7 @@ const Flash = {
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const ticker = [...this.labels].find(([, key]) => key === e.key)?.[0]
       if (ticker) {
-        e.preventDefault()
+        claim()
         this.jump(ticker)
       }
     }
@@ -320,6 +326,8 @@ updateJumpMode()
 
 window.addEventListener("keydown", (e) => {
   const el = document.activeElement
+  // Another handler (e.g. the watchlist filter's flash labels) already acted on this key.
+  if (e.defaultPrevented) return
   if (e.ctrlKey || e.metaKey || e.altKey) return
 
   if (isTyping(el)) {
