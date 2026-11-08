@@ -41,6 +41,10 @@
   display: none;
   @apply h-5 w-5 shrink-0 items-center justify-center rounded bg-fuchsia-600 font-mono text-xs font-bold text-white shadow-sm;
 }
+/* Dark mode: the same pink, softened, so it still stands out without glaring. */
+[data-theme=dark] .flash-label {
+  @apply bg-fuchsia-500/25 text-fuchsia-200 shadow-none ring-1 ring-fuchsia-400/40;
+}
 
 /* The watchlist filter clears with Esc; the browser's own ✕ would sit on top of the "/" hint. */
 [data-flash-input]::-webkit-search-cancel-button {
@@ -58,15 +62,20 @@
 }
 
 /* Jump-key labels (2026-11-07). Hidden while you type; shown when <html data-jump-on> (set by
-   app.js when no field has focus). Same pink as the flash labels.
-   inside: in the input's right end, where the watchlist filter shows its [/].
-   corner: on an exit-panel header's top-right corner. */
+   app.js when no field has focus). Styled like the watchlist filter's [/] hint: a quiet keycap
+   (thin border, grey letter), because these are on screen whenever you're not typing. The
+   bright pink is kept for the flash labels, which only appear during a search.
+   inside: in the input's right end, where the filter shows its [/].
+   corner: on an exit-panel header's top-right corner (solid background over the border). */
 .jump-label {
   display: none;
   position: absolute;
   z-index: 1;
   pointer-events: none; /* a click on the label still lands in the input */
-  @apply rounded bg-fuchsia-600 px-1 font-mono text-[10px] leading-4 font-bold text-white shadow-sm;
+  @apply rounded border border-zinc-300 bg-white px-1 font-mono text-[10px] leading-4 font-semibold text-zinc-500;
+}
+[data-theme=dark] .jump-label {
+  @apply border-zinc-600 bg-zinc-900 text-zinc-400;
 }
 .jump-label-inside {
   top: 50%;
@@ -74,7 +83,7 @@
   transform: translateY(-50%);
 }
 .jump-label-corner {
-  top: -0.35rem;
+  top: -0.45rem;
   right: 0.25rem;
 }
 [data-jump-on] .jump-label {

@@ -314,7 +314,9 @@ React SPA and the benchmark panel are unchanged).
   price ladder. Click one to draw dotted lines on the chart (**blue take-profit, orange
   stop-loss**: green and red already mean up/down and buy/sell). History tags automatic fills
   (`orders.via`: take-profit, stop-loss, limit entry), kept in the save file.
-- **Polish:** viewer's time-zone label (PST, CST…); equal input sizes; three portfolio panels;
+- **Polish:** jump labels restyled as quiet keycaps like the filter's `[/]` (the bright pink was
+  too loud in dark mode; pink stays for the flash labels, softened in dark mode);
+  viewer's time-zone label (PST, CST…); equal input sizes; three portfolio panels;
   Apple-style scrollbars that pop in and **fade out** (a registered `@property` color, since
   scrollbars can't be transitioned).
 - **Production log level → `:info`:** it was `:debug`, which logged every LiveView event's
