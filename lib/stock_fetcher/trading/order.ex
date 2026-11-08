@@ -10,6 +10,9 @@ defmodule StockFetcher.Trading.Order do
     field(:quantity, :integer)
     field(:price_cents, :integer)
     field(:total_cents, :integer)
+    # nil = manual market order; "limit_entry" | "take_profit" | "stop_loss" = a resting order
+    # filled (set by Trading.fill_pending_order/2).
+    field(:via, :string)
 
     belongs_to(:portfolio, StockFetcher.Trading.Portfolio)
 

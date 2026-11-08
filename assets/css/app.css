@@ -20,3 +20,149 @@
 [data-theme=dark] {
   color-scheme: dark;
 }
+
+/* Shared control styles for the trading page (2026-11-07), so the many buttons and inputs in
+   PricesLive stay consistent without repeating long class lists. */
+@layer components {
+  .btn {
+    @apply rounded-md px-3 py-1.5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-40;
+  }
+  .btn-outline {
+    @apply rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-700 dark:hover:bg-zinc-800;
+  }
+  .input {
+    @apply rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900;
+  }
+}
+
+/* Flash jump labels in the watchlist (2026-11-07). Hidden until the Flash hook's stylesheet
+   shows one and fills in its letter with ::before. Bright and monospace so it reads as a key. */
+.flash-label {
+  display: none;
+  @apply h-5 w-5 shrink-0 items-center justify-center rounded bg-fuchsia-600 font-mono text-xs font-bold text-white shadow-sm;
+}
+
+/* The watchlist filter clears with Esc; the browser's own ✕ would sit on top of the "/" hint. */
+[data-flash-input]::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* The ticker chip in the trade forms highlights briefly when the selection changes, so a
+   misclicked watchlist row is noticed before an order goes in. */
+@keyframes chip-flash {
+  from { background-color: rgb(250 204 21 / 0.45); }
+  to { background-color: transparent; }
+}
+.chip-flash {
+  animation: chip-flash 0.9s ease-out;
+}
+
+/* Jump-key labels (2026-11-07). Hidden while you type; shown when <html data-jump-on> (set by
+   app.js when no field has focus). Same pink as the flash labels.
+   inside: in the input's right end, where the watchlist filter shows its [/].
+   corner: on an exit-panel header's top-right corner. */
+.jump-label {
+  display: none;
+  position: absolute;
+  z-index: 1;
+  pointer-events: none; /* a click on the label still lands in the input */
+  @apply rounded bg-fuchsia-600 px-1 font-mono text-[10px] leading-4 font-bold text-white shadow-sm;
+}
+.jump-label-inside {
+  top: 50%;
+  right: 0.375rem;
+  transform: translateY(-50%);
+}
+.jump-label-corner {
+  top: -0.35rem;
+  right: 0.25rem;
+}
+[data-jump-on] .jump-label {
+  display: inline-block;
+}
+
+/* Inputs with an inside label: room for it, and no spinner arrows (they'd sit under the label;
+   the arrow keys still step the value). */
+input[type="number"][data-jump] {
+  padding-right: 1.75rem;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"][data-jump]::-webkit-inner-spin-button,
+input[type="number"][data-jump]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Layout pieces for the trading page (2026-11-07):
+   .num-input: every number box (quantities, exit prices, Move) is the same size; only the
+   new-portfolio amount and the watchlist filter are wider.
+   .panel: a bordered card that scrolls inside instead of growing the page. */
+@layer components {
+  .num-input {
+    @apply w-28;
+  }
+  .panel {
+    @apply min-h-0 overflow-y-auto rounded-xl border border-zinc-200 p-3 dark:border-zinc-800;
+  }
+}
+
+/* Apple-style scrollbars everywhere (2026-11-07): thin, no arrows, no track; the thumb pops in
+   while an element scrolls and fades out ~0.9 s after it stops. app.js adds .sb (once, it holds
+   the transition) and .is-scrolling (while scrolling) through liveSocket.js(), so LiveView's
+   patches, e.g. the watchlist on every tick, don't strip them.
+
+   Fading: browsers don't transition scrollbar pseudo-elements, but they do transition a
+   *registered* custom property. So the thumb paints var(--sb-thumb), and that variable is what
+   animates. Every element sets its own (transparent) value, so a scrolling page doesn't light up
+   the panels inside it through inheritance; the thumb pseudo-element inherits from its own
+   scroller.
+
+   Chrome 121+ ignores ::-webkit-scrollbar once scrollbar-width/scrollbar-color are set, so the
+   standard properties go to Firefox only; Chrome, Edge and Safari use the -webkit- rules. */
+@property --sb-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+* {
+  --sb-thumb: transparent;
+}
+.sb {
+  transition: --sb-thumb 0.6s ease-out;
+}
+.is-scrolling {
+  --sb-thumb: rgb(113 113 122 / 0.55); /* zinc-500 */
+  transition-duration: 0s; /* pop in; the fade is only on the way out */
+}
+[data-theme=dark] .is-scrolling,
+[data-theme=dark].is-scrolling {
+  --sb-thumb: rgb(161 161 170 / 0.5); /* zinc-400 */
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-corner {
+  display: none;
+  background: transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--sb-thumb);
+  border: 2px solid transparent; /* inset the thumb so it floats */
+  background-clip: padding-box;
+  border-radius: 9999px;
+}
+
+@supports (-moz-appearance: none) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sb-thumb) transparent;
+  }
+}
