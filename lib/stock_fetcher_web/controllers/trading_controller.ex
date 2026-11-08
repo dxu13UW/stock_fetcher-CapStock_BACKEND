@@ -28,8 +28,20 @@ defmodule StockFetcherWeb.TradingController do
     price = StockFetcher.latest_price(ticker)
     portfolio = Trading.demo_portfolio()
 
+    # The benchmark panel is Buy/Sell only. Short/Cover are LiveView-only features, so the API
+    # doesn't expose them even though Trading supports them.
     result =
-      Trading.place_market_order(portfolio.id, params["side"], ticker, params["quantity"], price)
+      if params["side"] in ["buy", "sell"] do
+        Trading.place_market_order(
+          portfolio.id,
+          params["side"],
+          ticker,
+          params["quantity"],
+          price
+        )
+      else
+        {:error, :invalid_side}
+      end
 
     case result do
       {:ok, %{order: order, portfolio: portfolio}} ->

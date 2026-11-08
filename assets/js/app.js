@@ -7,8 +7,24 @@ import {LiveSocket} from "phoenix_live_view"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
+// Times in the viewer's own zone. The server renders UTC (it doesn't know the browser's zone);
+// this rewrites each <time phx-hook="LocalTime" datetime="..."> with the same
+// toLocaleTimeString call the React panel uses. updated() runs after LiveView patches the
+// element (e.g. a new tick reset the text to UTC).
+const LocalTime = {
+  mounted() { this.render() },
+  updated() { this.render() },
+  render() {
+    const at = new Date(this.el.getAttribute("datetime"))
+    if (!isNaN(at)) {
+      this.el.textContent = at.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"})
+    }
+  }
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
-  params: {_csrf_token: csrfToken}
+  params: {_csrf_token: csrfToken},
+  hooks: {LocalTime}
 })
 
 liveSocket.connect()

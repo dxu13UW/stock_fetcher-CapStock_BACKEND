@@ -1,6 +1,6 @@
 defmodule StockFetcher.OrderWatcher do
   @moduledoc """
-  Fills resting orders (step G) from a price stream. One instance per source:
+  Fills resting orders (step G: entries, stop-losses, take-profits) from a price stream. One instance per source:
   `source: :live` listens to "stocks:live", `source: :mock` to "stocks:mock". A mock tick
   therefore can never reach a live order, even though both streams use the same tickers.
 
@@ -75,9 +75,9 @@ defmodule StockFetcher.OrderWatcher do
   # :not_open, which is expected and not reported.
   defp fill(%PendingOrder{} = order, fill_cents) do
     case Trading.fill_pending_order(order.id, fill_cents) do
-      {:ok, %{order: filled}} ->
-        label = if order.type == "stop", do: "Stop-loss triggered", else: "Limit order filled"
-        notify(order, :ok, "#{label}: #{Trading.confirmation(filled)}")
+      {:ok, %{order: filled} = result} ->
+        oco = if result.cancelled > 0, do: " The other exit was cancelled (OCO).", else: ""
+        notify(order, :ok, "#{label(order)}: #{Trading.confirmation(filled)}.#{oco}")
 
       {:error, :not_open} ->
         :ok
@@ -92,6 +92,10 @@ defmodule StockFetcher.OrderWatcher do
         )
     end
   end
+
+  defp label(%PendingOrder{type: "stop"}), do: "Stop-loss triggered"
+  defp label(%PendingOrder{parent_id: nil}), do: "Limit order filled"
+  defp label(%PendingOrder{}), do: "Take-profit filled"
 
   defp notify(order, kind, text) do
     Phoenix.PubSub.broadcast(

@@ -210,6 +210,113 @@ defmodule StockFetcherWeb.PricesLiveTest do
     end
   end
 
+  describe "shorts, brackets and moving exits (2026-11-07)" do
+    test "Short and Cover from the short-selling form", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZS", 50.0)
+
+      view
+      |> form("#short-form", %{ticker: "ZZS", quantity: "4"})
+      |> render_submit(%{side: "short"})
+
+      assert has_element?(view, "#order-message", "Shorted 4 ZZS at $50.00 ($200.00)")
+      assert has_element?(view, "#position-ZZS", "-4")
+      assert has_element?(view, "#position-ZZS", "short")
+
+      # A drop is a gain on a short: (45 - 50) * -4 = +$20.
+      broadcast_price("ZZS", 45.0, "stocks:mock")
+      assert has_element?(view, "#position-ZZS", "+$20.00")
+
+      view
+      |> form("#short-form", %{ticker: "ZZS", quantity: "4"})
+      |> render_submit(%{side: "cover"})
+
+      assert has_element?(view, "#order-message", "Covered 4 ZZS at $45.00 ($180.00)")
+      refute has_element?(view, "#position-ZZS")
+      assert has_element?(view, "#cash", "$100,020.00")
+    end
+
+    test "Buy on a short shows the short_open error", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZS", 50.0)
+
+      view
+      |> form("#short-form", %{ticker: "ZZS", quantity: "1"})
+      |> render_submit(%{side: "short"})
+
+      submit_order(view, "ZZS", "1", "buy")
+      assert has_element?(view, "#order-message", Trading.error_message(:short_open))
+    end
+
+    test "a short bracket fills now and lists both exits with Move forms", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZB", 105.0)
+
+      view
+      |> form("#limit-form", %{
+        direction: "short",
+        ticker: "ZZB",
+        quantity: "2",
+        limit: "100",
+        stop: "110",
+        take_profit: "80"
+      })
+      |> render_submit()
+
+      assert has_element?(view, "#order-message", "Filled now: Shorted 2 ZZB at $105.00")
+      assert has_element?(view, "#open-orders", "stop-loss cover 2 ZZB at $110.00")
+      assert has_element?(view, "#open-orders", "take-profit cover 2 ZZB at $80.00")
+      assert has_element?(view, "#open-orders form[id^=amend-]")
+    end
+
+    test "Move raises the stop; a price past the market is refused", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZM", 95.0)
+      submit_limit(view, "ZZM", "2", "100", "90")
+      [stop] = Trading.list_pending_orders(Trading.demo_portfolio(:mock).id)
+
+      broadcast_price("ZZM", 110.0, "stocks:mock")
+      assert has_element?(view, "#price-ZZM", "110.00")
+
+      view |> form("#amend-#{stop.id}", %{trigger: "112"}) |> render_submit()
+      assert has_element?(view, "#order-message", Trading.error_message(:would_fill_now))
+
+      view |> form("#amend-#{stop.id}", %{trigger: "95"}) |> render_submit()
+      assert has_element?(view, "#order-message", "Moved: stop-loss sell 2 ZZM at $95.00.")
+      assert has_element?(view, "#open-orders", "stop-loss sell 2 ZZM at $95.00")
+    end
+
+    test "OrderWatcher: take-profit fills and the stop is cancelled (OCO)", %{conn: conn} do
+      watcher = start_supervised!({StockFetcher.OrderWatcher, source: :mock})
+      view = mock_view_with_price(conn, "ZZO", 99.0)
+
+      view
+      |> form("#limit-form", %{
+        ticker: "ZZO",
+        quantity: "1",
+        limit: "100",
+        stop: "90",
+        take_profit: "110"
+      })
+      |> render_submit()
+
+      broadcast_price("ZZO", 111.0, "stocks:mock")
+      :sys.get_state(watcher)
+
+      assert has_element?(
+               view,
+               "#order-message",
+               "Take-profit filled: Sold 1 ZZO at $110.00 ($110.00). The other exit was cancelled (OCO)."
+             )
+
+      refute has_element?(view, "#open-orders")
+      refute has_element?(view, "#position-ZZO")
+    end
+
+    test "times are <time> elements the LocalTime hook rewrites in the browser", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZT", 10.0)
+
+      assert has_element?(view, ~s|#price-ZZT time[phx-hook=LocalTime][datetime$="Z"]|)
+      refute render(view) =~ "(UTC)"
+    end
+  end
+
   # Overrides the test clock from config/test.exs for one test (this module is async: false).
   defp pin_clock(now) do
     previous = Application.get_env(:stock_fetcher, :trading_fixed_now)

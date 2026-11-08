@@ -19,6 +19,11 @@ defmodule StockFetcher.Trading do
       hours the Worker stops polling, so the newest price is the last one before the close and
       filling at it would be trading on a stale price. Mock orders are exempt: mock prices are
       simulated and always moving, and the mock demo is most useful after hours.
+    * Four sides. `"buy"`/`"sell"` are the benchmark (both UIs). `"short"`/`"cover"` are
+      LiveView-only: a short sells shares you don't own and a cover buys them back. A short is
+      cash-secured: its full value is set aside from cash (no leverage), and the cover returns
+      that collateral plus or minus the P/L. A position is never long and short at once: Buy
+      on a short and Short on a long are refused, so each side keeps one meaning.
   """
   import Ecto.Query
 
@@ -43,7 +48,23 @@ defmodule StockFetcher.Trading do
           | :market_closed
           | :invalid_limit
           | :invalid_stop
+          | :invalid_take_profit
+          | :invalid_direction
+          | :invalid_trigger
+          | :would_fill_now
+          | :short_open
+          | :long_open
+          | :insufficient_short
           | :not_open
+
+  # Which way an order trades. Used in guards, so fill_rule/2 reads as the 2x2 table it is.
+  @buying ["buy", "cover"]
+  @selling ["sell", "short"]
+
+  # Fill failures that mark a resting order "rejected" (the state changed since it was placed,
+  # e.g. cash spent elsewhere). It isn't retried on the next tick.
+  @rejections [:insufficient_cash, :insufficient_shares, :insufficient_short] ++
+                [:short_open, :long_open, :portfolio_not_found]
 
   def starting_cash_cents, do: @starting_cash_cents
 
@@ -124,48 +145,82 @@ defmodule StockFetcher.Trading do
   def error_message(:invalid_limit), do: "Limit price must be a number greater than 0."
 
   def error_message(:invalid_stop),
-    do: "Stop price must be greater than 0 and below the limit price."
+    do: "Stop price must be past the limit: below it for a long, above it for a short."
 
+  def error_message(:invalid_take_profit),
+    do: "Take-profit must be beyond the limit: above it for a long, below it for a short."
+
+  def error_message(:invalid_direction), do: "Direction must be long or short."
+  def error_message(:invalid_trigger), do: "New price must be a number greater than 0."
+
+  def error_message(:would_fill_now),
+    do: "That price is already past the market, so it would fill now. Use Sell or Cover to exit."
+
+  def error_message(:short_open),
+    do: "You're short this ticker. Cover the short before buying."
+
+  def error_message(:long_open), do: "You hold this ticker. Sell it before shorting."
+  def error_message(:insufficient_short), do: "You can't cover more shares than you're short."
   def error_message(:not_open), do: "This order is no longer open (it may have just filled)."
 
-  # --- Resting orders (step G): limit buy entries and their stop-losses ---
+  # --- Resting orders: limit entries (long or short) and their exits ---
 
   @doc """
   Decides whether a resting order fills at a tick price (integer cents), and at what price.
-  Strict on purpose, so paper results don't flatter John (LOG.md 2026-11-06):
+  Strict on purpose, so paper results don't flatter John (LOG.md 2026-11-06).
 
-    * limit buy: only when the price trades *through* the limit (strictly below it), filled
-      at the limit price. A touch isn't enough: in a real market other orders at that price
-      may be ahead in the queue.
-    * stop sell: when the price is at or below the stop, filled at that tick's price, which
-      can be worse than the stop if the price gapped between ticks.
+  The four exit scenarios are a 2x2 of direction (buying / selling) and type:
+
+  |          | limit (guarantees the price)      | stop (guarantees the exit)           |
+  |----------|-----------------------------------|--------------------------------------|
+  | buying   | price < limit, fills at the limit | price >= stop, fills at the tick     |
+  | selling  | price > limit, fills at the limit | price <= stop, fills at the tick     |
+
+  A limit needs the price to trade *through* it (a touch isn't enough: other orders at that
+  price may be ahead in the queue). A stop fills at the tick price, which can be worse than
+  the stop if the price gapped. Long entry and short take-profit are buying limits; long
+  take-profit and short entry are selling limits; long stop-loss is a selling stop and short
+  stop-loss a buying stop.
 
   Returns `{:fill, price_cents}` or `:wait`.
   """
   @spec fill_rule(PendingOrder.t(), integer()) :: {:fill, integer()} | :wait
 
-  def fill_rule(%PendingOrder{type: "limit", trigger_cents: limit}, price_cents)
-      when price_cents < limit do
-    {:fill, limit}
-  end
+  def fill_rule(%PendingOrder{type: "limit", side: side, trigger_cents: limit}, price_cents)
+      when side in @buying and price_cents < limit,
+      do: {:fill, limit}
 
-  def fill_rule(%PendingOrder{type: "stop", trigger_cents: stop}, price_cents)
-      when price_cents <= stop do
-    {:fill, price_cents}
-  end
+  def fill_rule(%PendingOrder{type: "limit", side: side, trigger_cents: limit}, price_cents)
+      when side in @selling and price_cents > limit,
+      do: {:fill, limit}
+
+  def fill_rule(%PendingOrder{type: "stop", side: side, trigger_cents: stop}, price_cents)
+      when side in @selling and price_cents <= stop,
+      do: {:fill, price_cents}
+
+  def fill_rule(%PendingOrder{type: "stop", side: side, trigger_cents: stop}, price_cents)
+      when side in @buying and price_cents >= stop,
+      do: {:fill, price_cents}
 
   def fill_rule(%PendingOrder{}, _price_cents), do: :wait
 
   @doc """
-  Places a limit buy entry, with an optional stop-loss created when it fills.
+  Places a limit entry with an optional stop-loss and take-profit (a bracket), created when
+  the entry fills.
 
   `limit_price`/`stop_price` may be numbers or strings from a form (`stop_price` blank or nil
   for no stop). Options:
+    * `:direction` - `:long` (default; a limit buy below the price) or `:short` (a limit short
+      above the price). Strings "long"/"short" from a form are accepted.
+    * `:take_profit` - optional take-profit price (blank or nil for none).
     * `:source` - `:live` (default) or `:mock`: which price stream may trigger it.
-    * `:current_price` - the latest price the user saw (dollars). If it's already below the
-      limit and the market is open, the order fills now at that price, as a real exchange
-      would: there's a seller below the limit right now.
+    * `:current_price` - the latest price the user saw (dollars). If the limit is already
+      marketable (a long limit above the price, a short limit below it) and the market is
+      open, the order fills now at that price, as a real exchange would.
     * `:now` - the current time, for tests.
+
+  The prices must be in order: long `stop < limit < take-profit`, short
+  `take-profit < limit < stop`.
 
   Returns `{:ok, :placed, pending}`, `{:ok, :filled, fill}` (see `fill_pending_order/2`), or
   `{:error, reason}`.
@@ -174,20 +229,24 @@ defmodule StockFetcher.Trading do
     source = Keyword.get(opts, :source, :live)
     now = Keyword.get_lazy(opts, :now, &now/0)
 
-    with {:ok, ticker} <- normalize_ticker(ticker),
+    with {:ok, direction} <- normalize_direction(Keyword.get(opts, :direction, :long)),
+         {:ok, ticker} <- normalize_ticker(ticker),
          {:ok, quantity} <- normalize_quantity(quantity),
          {:ok, limit_cents} <- input_cents(limit_price, :invalid_limit),
-         {:ok, stop_cents} <- stop_cents(stop_price, limit_cents),
+         {:ok, stop_cents} <- exit_cents(stop_price, limit_cents, direction, :stop),
+         {:ok, tp_cents} <-
+           exit_cents(Keyword.get(opts, :take_profit), limit_cents, direction, :take_profit),
          {:ok, pending} <-
            insert_pending(%PendingOrder{
              portfolio_id: portfolio_id,
              source: Atom.to_string(source),
              ticker: ticker,
              type: "limit",
-             side: "buy",
+             side: entry_side(direction),
              quantity: quantity,
              trigger_cents: limit_cents,
-             stop_cents: stop_cents
+             stop_cents: stop_cents,
+             take_profit_cents: tp_cents
            }) do
       maybe_fill_now(pending, Keyword.get(opts, :current_price), source, now)
     end
@@ -195,10 +254,13 @@ defmodule StockFetcher.Trading do
 
   @doc """
   Fills an open resting order at `fill_cents`, in one transaction:
-  claims it (`open` -> `filled`, conditional), moves cash and shares through the same code as
-  market orders, and, for a limit entry with a stop, creates the open stop-loss sell.
+    1. claims it (`open` -> `filled`, conditional),
+    2. moves cash and shares through the same code as market orders,
+    3. for an entry, creates its exits (stop-loss and/or take-profit),
+    4. for an exit, cancels the other exit of the same entry (OCO: one cancels the other).
 
-  Returns `{:ok, %{order: order, pending: pending, stop: stop_or_nil}}`,
+  Returns `{:ok, %{order:, pending:, stop:, take_profit:, cancelled:}}` (`stop`/`take_profit`
+  are the new exits or nil; `cancelled` is how many sibling exits OCO cancelled),
   `{:error, :not_open}` if it was already cancelled or filled, or `{:error, reason}` if the
   fill failed (e.g. `:insufficient_cash`), in which case the order is marked "rejected".
   """
@@ -213,16 +275,54 @@ defmodule StockFetcher.Trading do
           fill(pending.side, pending.portfolio_id, pending.ticker, pending.quantity, fill_cents)
 
         pending = pending |> Ecto.Changeset.change(order_id: order.id) |> Repo.update!()
-        %{order: order, pending: pending, stop: maybe_insert_stop(pending)}
+
+        %{
+          order: order,
+          pending: pending,
+          stop: maybe_insert_exit(pending, :stop),
+          take_profit: maybe_insert_exit(pending, :take_profit),
+          cancelled: cancel_siblings(pending)
+        }
       end)
 
     case result do
-      {:error, reason} when reason in [:insufficient_cash, :insufficient_shares] ->
+      {:error, reason} when reason in @rejections ->
         reject(pending_id, reason)
         {:error, reason}
 
       other ->
         other
+    end
+  end
+
+  @doc """
+  Moves an open exit (a stop-loss or take-profit) to `new_price`, e.g. to raise a long's stop
+  to break-even after the price ran up. Entries can't be moved; cancel and place a new one.
+
+  `:current_price` (dollars) is the latest price the user saw. If the new price is already
+  past it, the exit would fill at once, which is almost always a typo, so it's refused with
+  `:would_fill_now`. This reuses `fill_rule/2`: "would this order fill at the current price?"
+
+  Moving a stop further away (more risk) is allowed, as at a real broker; the simulator shows
+  the consequences rather than forbidding them.
+
+  Returns `{:ok, pending}` or `{:error, reason}`. The update is conditional on the order still
+  being open, so a move and a fill can't both win.
+  """
+  def amend_order(portfolio_id, pending_id, new_price, opts \\ []) do
+    with {:ok, id} <- to_id(pending_id),
+         %PendingOrder{} = order <- get_open_exit(portfolio_id, id),
+         {:ok, cents} <- input_cents(new_price, :invalid_trigger),
+         :ok <- check_not_marketable(%{order | trigger_cents: cents}, opts[:current_price]),
+         {1, _} <-
+           from(p in PendingOrder,
+             where: p.id == ^id and p.portfolio_id == ^portfolio_id and p.status == "open"
+           )
+           |> Repo.update_all(set: [trigger_cents: cents, updated_at: utc_now()]) do
+      {:ok, Repo.get!(PendingOrder, id)}
+    else
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :not_open}
     end
   end
 
@@ -261,13 +361,24 @@ defmodule StockFetcher.Trading do
   end
 
   @doc ~S'Short description, e.g. "limit buy 3 AAPL at $190.00, stop $177.00".'
-  def describe(%PendingOrder{type: "limit"} = p) do
+  def describe(%PendingOrder{type: "limit", parent_id: nil} = p) do
     stop = if p.stop_cents, do: ", stop #{format_cents(p.stop_cents)}", else: ""
-    "limit buy #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}#{stop}"
+
+    take_profit =
+      if p.take_profit_cents, do: ", take-profit #{format_cents(p.take_profit_cents)}", else: ""
+
+    "limit #{p.side} #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}" <>
+      stop <> take_profit
   end
 
+  def describe(%PendingOrder{type: "limit"} = p),
+    do: "take-profit #{p.side} #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}"
+
   def describe(%PendingOrder{type: "stop"} = p),
-    do: "stop-loss sell #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}"
+    do: "stop-loss #{p.side} #{p.quantity} #{p.ticker} at #{format_cents(p.trigger_cents)}"
+
+  @doc "True for an exit (stop-loss or take-profit), which `amend_order/4` can move."
+  def exit?(%PendingOrder{parent_id: parent_id}), do: not is_nil(parent_id)
 
   @doc "PubSub topic for a portfolio's resting-order events (OrderWatcher -> PricesLive)."
   def portfolio_topic(portfolio_id), do: "portfolio:#{portfolio_id}"
@@ -278,9 +389,7 @@ defmodule StockFetcher.Trading do
   """
   @spec confirmation(Order.t()) :: String.t()
   def confirmation(%Order{} = order) do
-    verb = if order.side == "buy", do: "Bought", else: "Sold"
-
-    "#{verb} #{order.quantity} #{order.ticker} at #{format_cents(order.price_cents)} " <>
+    "#{verb(order.side)} #{order.quantity} #{order.ticker} at #{format_cents(order.price_cents)} " <>
       "(#{format_cents(order.total_cents)})"
   end
 
@@ -316,10 +425,11 @@ defmodule StockFetcher.Trading do
 
   defp insert_pending(%PendingOrder{} = pending), do: {:ok, Repo.insert!(pending)}
 
-  # Already marketable and the market is open: fill now at the price the user saw.
+  # Already marketable and the market is open: fill now at the price the user saw (a better
+  # price than the limit, which is what a real exchange gives you).
   defp maybe_fill_now(pending, current_price, source, now) do
     with {:ok, current_cents} <- to_cents(current_price),
-         true <- current_cents < pending.trigger_cents,
+         {:fill, _limit} <- fill_rule(pending, current_cents),
          :ok <- check_market_hours(source, now) do
       case fill_pending_order(pending.id, current_cents) do
         {:ok, fill} -> {:ok, :filled, fill}
@@ -339,21 +449,77 @@ defmodule StockFetcher.Trading do
     Repo.get!(PendingOrder, id)
   end
 
-  defp maybe_insert_stop(%PendingOrder{type: "limit", stop_cents: stop} = entry)
-       when is_integer(stop) do
-    Repo.insert!(%PendingOrder{
-      portfolio_id: entry.portfolio_id,
-      source: entry.source,
-      ticker: entry.ticker,
-      type: "stop",
-      side: "sell",
-      quantity: entry.quantity,
-      trigger_cents: stop,
-      parent_id: entry.id
-    })
+  # An entry that just filled creates its exits. They close the position, so they trade the
+  # other way: a long's exits sell, a short's exits cover. The stop is a stop order; the
+  # take-profit is a limit order (see the table in fill_rule/2).
+  defp maybe_insert_exit(%PendingOrder{parent_id: nil, type: "limit"} = entry, kind) do
+    trigger = if kind == :stop, do: entry.stop_cents, else: entry.take_profit_cents
+
+    if trigger do
+      Repo.insert!(%PendingOrder{
+        portfolio_id: entry.portfolio_id,
+        source: entry.source,
+        ticker: entry.ticker,
+        type: if(kind == :stop, do: "stop", else: "limit"),
+        side: exit_side(entry.side),
+        quantity: entry.quantity,
+        trigger_cents: trigger,
+        parent_id: entry.id
+      })
+    end
   end
 
-  defp maybe_insert_stop(_), do: nil
+  defp maybe_insert_exit(_exit, _kind), do: nil
+
+  # OCO: an exit that fills cancels the other exit of the same entry, in the same
+  # transaction, so the position can't be closed twice. Conditional on "open" like every
+  # status change. Returns how many were cancelled.
+  defp cancel_siblings(%PendingOrder{parent_id: nil}), do: 0
+
+  defp cancel_siblings(%PendingOrder{id: id, parent_id: parent_id}) do
+    {count, _} =
+      from(p in PendingOrder,
+        where: p.parent_id == ^parent_id and p.id != ^id and p.status == "open"
+      )
+      |> Repo.update_all(set: [status: "cancelled", updated_at: utc_now()])
+
+    count
+  end
+
+  defp get_open_exit(portfolio_id, id) do
+    Repo.one(
+      from(p in PendingOrder,
+        where:
+          p.id == ^id and p.portfolio_id == ^portfolio_id and p.status == "open" and
+            not is_nil(p.parent_id)
+      )
+    )
+  end
+
+  # Without a current price there's nothing to compare with; the move is allowed.
+  defp check_not_marketable(order, current_price) do
+    with {:ok, current_cents} <- to_cents(current_price),
+         {:fill, _} <- fill_rule(order, current_cents) do
+      {:error, :would_fill_now}
+    else
+      _ -> :ok
+    end
+  end
+
+  defp entry_side(:long), do: "buy"
+  defp entry_side(:short), do: "short"
+
+  defp exit_side("buy"), do: "sell"
+  defp exit_side("short"), do: "cover"
+
+  defp normalize_direction(direction) when direction in [:long, "long"], do: {:ok, :long}
+  defp normalize_direction(direction) when direction in [:short, "short"], do: {:ok, :short}
+  defp normalize_direction(_), do: {:error, :invalid_direction}
+
+  defp verb("buy"), do: "Bought"
+  defp verb("sell"), do: "Sold"
+  defp verb("short"), do: "Shorted"
+  defp verb("cover"), do: "Covered"
 
   # Conditional too: if it was cancelled meanwhile, it stays cancelled.
   defp reject(id, reason) do
@@ -363,14 +529,25 @@ defmodule StockFetcher.Trading do
     )
   end
 
-  defp stop_cents(blank, _limit_cents) when blank in [nil, ""], do: {:ok, nil}
+  # An optional exit price, which must be on the right side of the limit. The stop is on the
+  # losing side (below a long's entry, above a short's), the take-profit on the winning side.
+  defp exit_cents(blank, _limit, _direction, _kind) when blank in [nil, ""], do: {:ok, nil}
 
-  defp stop_cents(stop_price, limit_cents) do
-    case input_cents(stop_price, :invalid_stop) do
-      {:ok, stop} when stop < limit_cents -> {:ok, stop}
-      _ -> {:error, :invalid_stop}
+  defp exit_cents(price, limit, direction, kind) do
+    error = if kind == :stop, do: :invalid_stop, else: :invalid_take_profit
+
+    with {:ok, cents} <- input_cents(price, error),
+         true <- right_side?(cents, limit, direction, kind) do
+      {:ok, cents}
+    else
+      _ -> {:error, error}
     end
   end
+
+  defp right_side?(cents, limit, :long, :stop), do: cents < limit
+  defp right_side?(cents, limit, :long, :take_profit), do: cents > limit
+  defp right_side?(cents, limit, :short, :stop), do: cents > limit
+  defp right_side?(cents, limit, :short, :take_profit), do: cents < limit
 
   # Prices typed into a form arrive as strings ("190.5"); numbers come from code and tests.
   defp input_cents(value, error) when is_binary(value) do
@@ -409,20 +586,23 @@ defmodule StockFetcher.Trading do
   defp fill("sell", portfolio_id, ticker, quantity, price_cents),
     do: sell(portfolio_id, ticker, quantity, price_cents, quantity * price_cents)
 
+  defp fill("short", portfolio_id, ticker, quantity, price_cents),
+    do: short(portfolio_id, ticker, quantity, price_cents, quantity * price_cents)
+
+  defp fill("cover", portfolio_id, ticker, quantity, price_cents),
+    do: cover(portfolio_id, ticker, quantity, price_cents, quantity * price_cents)
+
   defp buy(portfolio_id, ticker, quantity, price_cents, total_cents) do
     # Check-and-debit in one statement. Doing the write first also takes SQLite's write lock
     # at the start of the transaction, so the reads below can't go stale.
-    {debited, _} =
-      from(p in Portfolio, where: p.id == ^portfolio_id and p.cash_cents >= ^total_cents)
-      |> Repo.update_all(inc: [cash_cents: -total_cents])
-
-    if debited == 0 do
-      Repo.rollback(
-        if Repo.get(Portfolio, portfolio_id), do: :insufficient_cash, else: :portfolio_not_found
-      )
-    end
+    debit!(portfolio_id, total_cents)
 
     case Repo.get_by(Position, portfolio_id: portfolio_id, ticker: ticker) do
+      # Buying on a short would mean "cover", but Buy is the benchmark action and keeps one
+      # meaning. The rollback also undoes the debit above.
+      %Position{quantity: held} when held < 0 ->
+        Repo.rollback(:short_open)
+
       nil ->
         Repo.insert!(%Position{
           portfolio_id: portfolio_id,
@@ -468,6 +648,85 @@ defmodule StockFetcher.Trading do
     insert_order(portfolio_id, "sell", ticker, quantity, price_cents, total_cents)
   end
 
+  # Short: sell shares you don't own, to buy them back lower. The position's quantity goes
+  # negative and avg_cost_cents is the average *entry* price, so the P/L formula both UIs use,
+  # (price - avg) * quantity, is right without a special case: with -10 shares, a drop is a
+  # gain.
+  #
+  # Cash-secured: the full value is set aside from cash (same check-and-debit as a buy), so a
+  # short uses buying power like a long does and the simulator never lends money. Real brokers
+  # credit the proceeds and require margin; this is simpler and can't go bankrupt on paper.
+  defp short(portfolio_id, ticker, quantity, price_cents, total_cents) do
+    debit!(portfolio_id, total_cents)
+
+    case Repo.get_by(Position, portfolio_id: portfolio_id, ticker: ticker) do
+      nil ->
+        Repo.insert!(%Position{
+          portfolio_id: portfolio_id,
+          ticker: ticker,
+          quantity: -quantity,
+          avg_cost_cents: price_cents
+        })
+
+      %Position{quantity: held} when held > 0 ->
+        Repo.rollback(:long_open)
+
+      position ->
+        shorted = -position.quantity + quantity
+        entry_cents = -position.quantity * position.avg_cost_cents + total_cents
+
+        position
+        |> Ecto.Changeset.change(
+          quantity: -shorted,
+          avg_cost_cents: div(entry_cents + div(shorted, 2), shorted)
+        )
+        |> Repo.update!()
+    end
+
+    insert_order(portfolio_id, "short", ticker, quantity, price_cents, total_cents)
+  end
+
+  # Cover: buy back shorted shares. Returns the collateral set aside at entry plus the P/L:
+  #   quantity * avg (collateral) + quantity * (avg - price) (P/L) = quantity * (2 * avg - price)
+  # If the price more than doubled, that's negative and the extra comes out of cash, which must
+  # cover it (the conditional UPDATE checks, like a buy).
+  defp cover(portfolio_id, ticker, quantity, price_cents, total_cents) do
+    {reduced, _} =
+      from(p in Position,
+        where:
+          p.portfolio_id == ^portfolio_id and p.ticker == ^ticker and p.quantity <= ^(-quantity)
+      )
+      |> Repo.update_all(inc: [quantity: quantity])
+
+    if reduced == 0, do: Repo.rollback(:insufficient_short)
+
+    position = Repo.get_by!(Position, portfolio_id: portfolio_id, ticker: ticker)
+    credit_cents = quantity * (2 * position.avg_cost_cents - price_cents)
+
+    {credited, _} =
+      from(p in Portfolio, where: p.id == ^portfolio_id and p.cash_cents >= ^(-credit_cents))
+      |> Repo.update_all(inc: [cash_cents: credit_cents])
+
+    if credited == 0, do: Repo.rollback(:insufficient_cash)
+
+    if position.quantity == 0, do: Repo.delete!(position)
+
+    insert_order(portfolio_id, "cover", ticker, quantity, price_cents, total_cents)
+  end
+
+  # Check-and-debit in one statement (see buy/5). Rolls back the transaction when it fails.
+  defp debit!(portfolio_id, total_cents) do
+    {debited, _} =
+      from(p in Portfolio, where: p.id == ^portfolio_id and p.cash_cents >= ^total_cents)
+      |> Repo.update_all(inc: [cash_cents: -total_cents])
+
+    if debited == 0 do
+      Repo.rollback(
+        if Repo.get(Portfolio, portfolio_id), do: :insufficient_cash, else: :portfolio_not_found
+      )
+    end
+  end
+
   defp insert_order(portfolio_id, side, ticker, quantity, price_cents, total_cents) do
     Repo.insert!(%Order{
       portfolio_id: portfolio_id,
@@ -483,6 +742,8 @@ defmodule StockFetcher.Trading do
 
   defp normalize_side(side) when side in ["buy", :buy], do: {:ok, "buy"}
   defp normalize_side(side) when side in ["sell", :sell], do: {:ok, "sell"}
+  defp normalize_side(side) when side in ["short", :short], do: {:ok, "short"}
+  defp normalize_side(side) when side in ["cover", :cover], do: {:ok, "cover"}
   defp normalize_side(_), do: {:error, :invalid_side}
 
   defp normalize_ticker(ticker) when is_binary(ticker) do

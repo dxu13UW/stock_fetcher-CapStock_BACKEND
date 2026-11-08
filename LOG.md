@@ -840,3 +840,112 @@ only changes when a new ticker appears. Regression test added.
   after-hours rejection, UTC times, touch fills, and which next feature; decide whether to reset
   the live demo portfolio first.
 - Metrics (predictions first), then the final log, merge and submission on Sunday.
+
+## 2026-11-07 — John's handover reply: accepted, decisions delegated to me
+
+John tried it and replied that it **meets all his needs**. For anything further (UI or
+features) he wants me to take the initiative and make the decisions myself. So the open
+questions from the handover are now mine to settle, and each answer has to rest on what he said
+in the interview, not on what I'd find fun to build.
+
+### Decisions
+1. **Live orders after hours: keep rejecting them.** Finnhub doesn't update outside market hours,
+   so a fill would use a stale price. An honest "market closed" beats a fake fill.
+2. **Times: show the viewer's local time instead of UTC.** The React SPA already does this
+   (`toLocaleTimeString()` uses the browser's zone, which follows the viewer automatically).
+   LiveView renders on the server, which doesn't know the viewer's zone: it has to be sent
+   (connect params or a JS hook). A small place where LiveView loses.
+3. **Touch fills: stay off.** A limit needs the price to trade through it. A simulator that fills
+   more easily than a real market teaches false confidence.
+4. **Next features: all four exit scenarios**: long take-profit / stop-loss and short
+   take-profit / stop-loss, starting with moving the stop (the gap my own winning trade
+   showed).
+
+### Order of work (metrics before features)
+Measure the metrics *before* adding LiveView-only features. Today the trading panel is identical
+in both UIs; every feature added to `/prices` afterwards grows its render and diffs and would
+skew the comparison against LiveView.
+
+### Working mode for the last two days
+Short on time, I decided to write no code myself until the deadline: the agent writes it, and I
+document *why* each piece exists and *what* it does in my Obsidian note (`Artifact 4.md`). This
+overrides the CLAUDE.md "I attempt the last step" rule for Nov 7–8 only.
+
+### Built: all four exit scenarios, moving exits, local times (agent-written)
+- **The four scenarios are a 2×2 table:** direction (buying / selling) × type (limit / stop).
+  `fill_rule/2` now has one clause per cell, matching on `side` as well as `type`:
+  buying limit (long entry, short take-profit): price < limit, fills at the limit; selling limit
+  (long take-profit, short entry): price > limit, at the limit; selling stop (long stop-loss):
+  price ≤ stop, at the tick; buying stop (short stop-loss): price ≥ stop, at the tick.
+- **Shorts:** two new sides, `"short"` and `"cover"`. A short position has a negative quantity
+  and `avg_cost_cents` is the average entry, so the existing P/L formula
+  `(price − avg) × quantity` is right with no special case (React's too). **Cash-secured:** the
+  short's full value is set aside from cash, and the cover returns `qty × (2 × avg − price)`
+  (collateral ± P/L). No leverage, so paper can't go bankrupt. Real brokers credit the proceeds
+  and require margin (Reg T: 150%); trade-off recorded.
+- **One meaning per side:** Buy on a short → `:short_open`; Short on a long → `:long_open`.
+  Otherwise "Buy" would sometimes mean "cover" and the benchmark action would change meaning.
+- **Benchmark untouched:** Short/Cover are a separate `#short-form` in LiveView, and the API
+  rejects any side other than buy/sell, so the React panel and its spec are unchanged.
+- **Brackets with OCO:** a limit entry takes a direction (long/short), an optional stop and an
+  optional take-profit (`take_profit_cents`, new migration). Prices must be in order (long
+  `stop < limit < TP`, short `TP < limit < stop`). When the entry fills, both exits are created;
+  when one exit fills, the other is cancelled **in the same transaction** (conditional on
+  "open", like cancel vs fill), so a position can't be closed twice.
+- **Move an exit:** `Trading.amend_order/4`, a "Move" box next to each open stop/take-profit.
+  It refuses a price that would fill immediately (`:would_fill_now`), checked by asking
+  `fill_rule/2` "would this fill at the current price?" (no new rule to keep in sync). Moving
+  a stop further away is allowed, like a real broker. Entries can't be moved (cancel instead).
+- **Local times:** `<time phx-hook="LocalTime" datetime="…Z">`. The server renders UTC (it can't
+  know the viewer's zone); a ~10-line JS hook rewrites it with `toLocaleTimeString`, and
+  `updated()` re-applies it after LiveView patches the element. React's order history now
+  uses the same call. NaiveDateTime gets a `Z` appended, or the browser would read it as local.
+- **Known gap:** if an exit is moved in the same millisecond the watcher decides to fill it
+  at the old price, the fill wins with the old price. SQLite serializes the two writes, so
+  nothing double-fills; the window is one tick.
+- Tests: 136 (was 112), all passing; `mix format` and `--warnings-as-errors` clean.
+
+### LiveView vs. React observations (Nov 7)
+- **Local time is where LiveView loses on a one-liner.** React formats in the browser, which
+  knows the zone. LiveView renders on the server, which doesn't, so it needs a client hook, a
+  `datetime` attribute and care with naive timestamps. Server rendering's cost: anything that
+  depends on the *viewer's* machine has to be sent up or fixed up in JS.
+- The production app (still `37fc3c3`) is unchanged, so the benchmark metrics can still be
+  measured on it before these LiveView-only features are deployed.
+
+### Metrics: my predictions (written before measuring)
+Measured on production while it still runs `37fc3c3`, so the benchmark panel is the same in
+both UIs and no Nov 7 feature is on the page yet.
+1. **WebSocket bytes per price tick:** React less than LiveView, since LiveView has more
+   logic. Ratio about **5 : 1** (LiveView : React).
+2. **Bytes per keystroke (`phx-change`):** about **1 KB** (React sends nothing).
+3. **Click Buy → confirmation:** about the **same** in both, a few bytes apart.
+4. **Server memory per user:** about **3 KB** for both a LiveView process and a channel process.
+
+### Metrics: results and the gap
+How: a Node script (`ws`) opened a real LiveView session (`/live`, joined with the page's
+session/static tokens) and a React-style channel (`/socket`, `stocks:mock`) side by side on the
+**production** app (`37fc3c3`), for 45 s of mock ticks, twice. Orders were error-path only
+(quantity 0) so no portfolio changed. Byte counts are WebSocket frame payloads (no compression
+on either socket).
+
+| Metric | LiveView | React | My prediction | Gap |
+|---|---|---|---|---|
+| Bytes per price tick | **151 B** avg (119 median) | **123 B** | LiveView 5× React | Only **1.2×**. LiveView sends just the changed values (price, time) keyed by position in the template; React's JSON repeats every key name. The average is above the median because some ticks also change a P/L cell or add a row. |
+| Join / first payload | 4.4 KB join reply (5.7 KB HTML first) | 65 B join reply | – | LiveView's join carries the whole rendered page; React then makes separate API calls for history and the portfolio. |
+| Bytes per keystroke (`phx-change`) | **113 B sent + 116 B reply** | 0 | ~1 KB | 4× smaller than I guessed, but React really is 0: the input lives in the browser. |
+| Click → reply (median, error path) | **46 ms** (118 B out, 99 B back) | **52 ms** (43 B body + HTTP headers, 88 B back) | about the same | Right: both are one round trip to Fly. LiveView is slightly faster because the WebSocket is already open and has no HTTP headers. |
+| Successful order reply | a diff of the changed parts | **~1.8 KB** (the whole portfolio, grows with history) | – | React re-sends everything; LiveView sends what changed. Not measured on prod (no test orders in John's portfolio). |
+| Server memory per user | **110–145 KB** per LiveView process | **27 KB** per channel process | ~3 KB both | Way off. The LiveView process keeps every assign (prices, portfolio, orders, open orders, form state) **plus** the rendered tree it diffs against. The channel process only holds its socket. ~4–5× per user. |
+
+- Memory was measured on the **local dev server** (Nov 7 code, as a named node, processes found
+  under `Phoenix.Socket.PoolSupervisor`), because a shell on production was blocked by the
+  agent's auto-mode safety policy. Same code path; the dev mock portfolio has some order history.
+- **Not measured:** throttled latency (needs DevTools "Slow 3G" in a browser) and browser
+  CPU/memory. LiveView's first-load bundle was measured earlier: React 359 KB JS (121 KB gzipped)
+  vs LiveView 145 KB (44 KB gzipped).
+- **What I learned:** I expected LiveView to cost the network more and the server about the
+  same. It's the opposite. On the wire LiveView is close to React per tick and cheaper per
+  order. The real cost is **server memory**: every open tab holds a ~110 KB process with the
+  page's state. At 1,000 users that's ~110 MB vs ~27 MB, fine for one Fly machine, but it's
+  the number that grows with users, while React pushes that state into each user's browser.
