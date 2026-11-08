@@ -67,7 +67,9 @@ defmodule StockFetcher.Candles do
       now_fn: Keyword.get(opts, :now_fn, &DateTime.utc_now/0)
     }
 
-    if state.fetch_bars, do: send(self(), :refresh)
+    # 10 s after boot, so the first fetch doesn't add to the app's own startup memory spike on
+    # the small Fly machine.
+    if state.fetch_bars, do: Process.send_after(self(), :refresh, 10_000)
     {:ok, state}
   end
 
@@ -103,6 +105,8 @@ defmodule StockFetcher.Candles do
       end
 
     Process.send_after(self(), :refresh, @refresh_ms)
+    # Drop the decoded pages' garbage now rather than whenever the heap next fills.
+    :erlang.garbage_collect()
     {:noreply, Map.put(state, :refreshed, true)}
   end
 
@@ -165,7 +169,7 @@ defmodule StockFetcher.Candles do
           now |> DateTime.add(-16, :minute) |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
         feed: "sip",
         adjustment: "split",
-        limit: 10_000
+        limit: 5_000
       ]
 
       fetch_pages(params, nil, %{}, 0)
@@ -175,8 +179,13 @@ defmodule StockFetcher.Candles do
   end
 
   # Follows next_page_token. SIP bars include pre- and after-market (4:00-20:00 ET, 192 bars a
-  # day), so 50 tickers x 4 days is ~4 pages of 10,000; capped at 10 in case of a loop.
-  defp fetch_pages(_params, _token, acc, 10), do: {:ok, finish(acc)}
+  # day), so 50 tickers x 4 days is ~8 pages of 5,000; capped at 16 in case of a loop.
+  #
+  # Memory: each page is turned into compact candles and trimmed to @keep per ticker *before*
+  # the next page is fetched, so only one page of raw JSON is alive at a time. The first
+  # version kept every raw page (~40,000 decoded bar maps) and the 256 MB Fly machine was
+  # OOM-killed at boot (2026-11-08).
+  defp fetch_pages(_params, _token, acc, 16), do: {:ok, acc}
 
   defp fetch_pages(params, token, acc, page) do
     params = if token, do: Keyword.put(params, :page_token, token), else: params
@@ -194,12 +203,11 @@ defmodule StockFetcher.Candles do
 
     case Req.get(options) do
       {:ok, %Req.Response{status: 200, body: %{"bars" => bars} = body}} ->
-        acc = Map.merge(acc, bars || %{}, fn _t, a, b -> a ++ b end)
+        # Pages run by symbol, then time, so a ticker split across pages continues in order.
+        acc = Map.merge(acc, finish(bars || %{}), fn _t, a, b -> Enum.take(a ++ b, -@keep) end)
+        next = body["next_page_token"]
 
-        case body["next_page_token"] do
-          next when is_binary(next) -> fetch_pages(params, next, acc, page + 1)
-          _ -> {:ok, finish(acc)}
-        end
+        if is_binary(next), do: fetch_pages(params, next, acc, page + 1), else: {:ok, acc}
 
       {:ok, %Req.Response{status: status}} ->
         {:error, {:http_status, status}}
