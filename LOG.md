@@ -933,7 +933,7 @@ on either socket).
 |---|---|---|---|---|
 | Bytes per price tick | **151 B** avg (119 median) | **123 B** | LiveView 5× React | Only **1.2×**. LiveView sends just the changed values (price, time) keyed by position in the template; React's JSON repeats every key name. The average is above the median because some ticks also change a P/L cell or add a row. |
 | Join / first payload | 4.4 KB join reply (5.7 KB HTML first) | 65 B join reply | – | LiveView's join carries the whole rendered page; React then makes separate API calls for history and the portfolio. |
-| Bytes per keystroke (`phx-change`) | **113 B sent + 116 B reply** | 0 | ~1 KB | 4× smaller than I guessed, but React really is 0: the input lives in the browser. |
+| Bytes per input update (`phx-change`, debounced 250 ms, so one per pause in typing, not per key) | **113 B sent + 116 B reply** | 0 | ~1 KB | 4× smaller than I guessed, and fewer events than "per keystroke" implies. React really is 0: the input lives in the browser. |
 | Click → reply (median, error path) | **46 ms** (118 B out, 99 B back) | **52 ms** (43 B body + HTTP headers, 88 B back) | about the same | Right: both are one round trip to Fly. LiveView is slightly faster because the WebSocket is already open and has no HTTP headers. |
 | Successful order reply | a diff of the changed parts | **~1.8 KB** (the whole portfolio, grows with history) | – | React re-sends everything; LiveView sends what changed. Not measured on prod (no test orders in John's portfolio). |
 | Server memory per user | **110–145 KB** per LiveView process | **27 KB** per channel process | ~3 KB both | Way off. The LiveView process keeps every assign (prices, portfolio, orders, open orders, form state) **plus** the rendered tree it diffs against. The channel process only holds its socket. ~4–5× per user. |
@@ -949,3 +949,20 @@ on either socket).
   order. The real cost is **server memory**: every open tab holds a ~110 KB process with the
   page's state. At 1,000 users that's ~110 MB vs ~27 MB, fine for one Fly machine, but it's
   the number that grows with users, while React pushes that state into each user's browser.
+
+### Wrap-up for the day: PLAN.md, merge, a wording fix
+- **Wording fix:** the "bytes per keystroke" row is really bytes per *input update*. The text
+  inputs use `phx-debounce="250"`, so LiveView sends one `phx-change` after each pause in
+  typing, not one per key. Found while asking whether sending keystrokes is a security risk.
+  Here it isn't (`wss://`, no secrets in the forms, typing never places an order, origin and
+  signed-session checks), but the server does see what was typed before submit, even text
+  later deleted. React keeps that in the browser. Worth deciding per form; never for
+  password or card fields.
+- **`PLAN.md` updated:** interview items marked built or cut, a "Scope update (2026-11-07)"
+  section for what I added back after John delegated decisions (shorts, take-profit/OCO,
+  movable exits, local times), metrics status, schedule actuals, the Bandit fix risk closed.
+- **Merged `liveview` into `main`** with `--no-ff` after `mix format`, `mix compile
+  --warnings-as-errors` and `mix test` passed. Done locally rather than through a GitHub PR
+  (no `gh` CLI); the merge commit marks the Artifact 4 work. Production already runs this code,
+  so no deploy was needed. The React PR (`feat/trading-panel` → `main`) is still to open in
+  the GitHub web UI.

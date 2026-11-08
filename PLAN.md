@@ -111,7 +111,8 @@ Full transcript is in `LOG.md`. Summary of what they told me:
 | Trades high-beta names like QBTS | AAPL, AMZN, GOOGL, MSFT, TSLA | Alpaca poller for extra tickers (section 5, step B2) |
 
 ### Interview questions (answers go in `LOG.md`)
-1. One shared demo portfolio, or separate accounts? *(open)*
+1. One shared demo portfolio, or separate accounts? *(my assumption, which John accepted at
+   handover: one shared demo portfolio, plus a separate one for the mock stream)*
 2. Order types: market only, or limit/stop too? *(answered: limit entries, hard stop-losses,
    partial exits, and short selling)*
 3. Starting cash? *(open; their example position was $60,000)*
@@ -160,16 +161,19 @@ fairly. Interview-driven order types go in LiveView only (below). *(Confirmed 20
 
 ### LiveView only
 - Read-only live prices page (`PricesLive`).
-- **From interview 1, in priority order** (items 3–5 and 7 cut 2026-11-04, see below):
-  1. Limit-order entries (resting until a broadcast price crosses the limit).
-  2. Hard stop-loss attached at entry.
-  3. Pre-trade risk preview: position size, $ at risk, % at risk.
+- **From interview 1, in priority order** (status as of 2026-11-07; see "Scope update" below):
+  1. Limit-order entries (resting until a broadcast price crosses the limit). **Built** (Nov 6).
+  2. Hard stop-loss attached at entry. **Built** (Nov 6).
+  3. Pre-trade risk preview: position size, $ at risk, % at risk. *Cut.*
   4. Short / Cover actions. "Sell" keeps its benchmark meaning, so "selling more than held"
-     is still an error.
-  5. Take-profit / scale-out (e.g. close 50% at a target).
-  6. Trade history with $ risked vs. $ made.
-  7. 4-hour candles with marked zones. The data is available from Alpaca (section 5); this
-     stays last because of time, not data.
+     is still an error. **Built** (Nov 7): market Short/Cover in their own form, plus short
+     limit entries.
+  5. Take-profit / scale-out (e.g. close 50% at a target). **Built** (Nov 7) as a full
+     bracket: take-profit and stop on one entry, one-cancels-the-other (OCO). Scale-out is a
+     partial Sell/Cover of any quantity; no one-click "close half".
+  6. Trade history with $ risked vs. $ made. **Partly built:** order history with prices and
+     totals; no $ risked vs. $ made column.
+  7. 4-hour candles with marked zones. *Cut* (time, not data).
 - Simulated dividends (not mentioned in interview 1; lower priority until confirmed).
 
 ### Out of scope
@@ -192,6 +196,23 @@ language, e.g. "buy 10 AAPL". A `claude -p` (headless Claude Code) call turns th
 `{side, ticker, quantity}`, shows the parsed order for confirmation, then calls the same order
 API as the React panel (step F), so the server still supplies the price. Runs locally; the
 model never sees credentials and can only reach the paper-trading endpoint.
+
+### Scope update (2026-11-07, after the handover)
+John accepted the app at handover ("meets all my needs") and handed further UI and feature
+decisions to me. With the agreed scope shipped, I added back two cut items, because they
+complete John's own workflow (interview 1: short QBTS, stop past the sweep, take profit at the
+next zone):
+- **Short / Cover** (market and limit), cash-secured: a short debits its full value, a cover
+  credits it back with the P/L.
+- **Take-profit with OCO**, so all four exits work: long and short, take-profit and stop-loss.
+- **Moving an open exit** (stop or take-profit) without cancelling it; refused if the new price
+  would fill immediately.
+- **Local times** instead of UTC, in both UIs.
+
+Still cut: dividends (H), 4-hour candles (I), staging, the Alpaca poller (B2), the pre-trade
+risk preview, and the `claude -p` console bonus. Kept: live orders are rejected while the
+market is closed, and resting orders only fill when a price crosses the trigger (no "touch"
+fills). Reasons in `LOG.md` (2026-11-07).
 
 ### Cut order if time runs short (original; superseded by the agreed scope above)
 1. Dividends → seeded data with a minimal display, or dropped if the interviewee confirms they
@@ -261,6 +282,8 @@ Decided 2026-10-30 after testing the free Alpaca paper-account key (results in `
 - **Branch:** all Artifact 4 work happens on `liveview`. `main` stays deployable.
 - **Commits:** small, conventional-style messages (`feat:`, `fix:`, `test:`, `docs:`).
 - **Merging:** I open a PR from `liveview` to `main` and merge it myself after the checks pass.
+  *(2026-11-07: merged locally with `git merge --no-ff` after the checks passed, since the `gh`
+  CLI isn't set up; the merge commit marks the Artifact 4 work.)*
 - **Before every commit:** `mix format`, `mix compile --warnings-as-errors`, `mix test`.
 - **React changes:** a matching branch in the React repo, merged when the API side is on `main`.
 - **Deploys:** production stays one Fly app (`capstock-backend`) serving `/api`, channels, and
@@ -283,6 +306,11 @@ prediction in `LOG.md`; afterwards, the result and the gap.
 | Client cost | DevTools Performance (CPU, memory) |
 | Developer cost | Lines changed and hours to build the trading panel in each UI |
 
+**Status (2026-11-07):** predictions and results are in `LOG.md`. Measured: bytes per tick,
+join/first payload, bytes per input update, click latency (normal network), order reply size,
+server memory per user, and first-load JS bundle. Not measured: throttled latency and browser
+CPU/memory (both need DevTools in a real browser).
+
 ## 8. Schedule
 
 | Date | Milestone |
@@ -292,8 +320,8 @@ prediction in `LOG.md`; afterwards, the result and the gap.
 | Mon Nov 2 – Tue Nov 3 | `PricesLive` (B), trading module with tests (C). *(Actual: C committed Wed Nov 4; B2 cut.)* |
 | Wed Nov 4 | Process design notes (D). LiveView trading panel with trade history (E). *(Rescheduled 2026-11-04.)* |
 | Thu Nov 5 | Dockerfile asset step and first deploy (with `1b23b90`). React trading panel (F). |
-| Fri Nov 6 | Limit entries and stop-losses (G), deploy. |
-| Sat Nov 7 | Handover to John on the deployed app, small fixes. Metrics, both UIs. |
+| Fri Nov 6 | Limit entries and stop-losses (G), deploy. *(Done; handover sent the same day.)* |
+| Sat Nov 7 | Handover to John on the deployed app, small fixes. Metrics, both UIs. *(Done: John accepted; metrics measured; added shorts, take-profit/OCO, movable exits, local times; deployed; `liveview` merged to `main`.)* |
 | **Sun Nov 8, 11:59 PM** | **Due:** final `LOG.md` entry, portfolio card with link and reflection, Canvas submission. |
 
 ## 9. Risks
@@ -307,7 +335,7 @@ prediction in `LOG.md`; afterwards, the result and the gap.
 | Alpaca poller crashes or Alpaca is down | Supervised separately from the Worker (`:one_for_one`), so Finnhub tickers keep updating; extra tickers show their last price as stale. |
 | Prices from two sources (IEX vs. Finnhub) aren't directly comparable | One source per ticker; the UI can label the source. Acceptable for paper trading. |
 | Market closed during the demo | `Mock.Streamer` provides prices outside market hours. |
-| Security fix `1b23b90` (Bandit HIGH DoS advisories) not deployed yet | Accepted 2026-10-31: production ships together with the first basic LiveView release. If any other deploy happens first, include the fix. |
+| Security fix `1b23b90` (Bandit HIGH DoS advisories) not deployed yet | Accepted 2026-10-31: production ships together with the first basic LiveView release. *Resolved Nov 5: deployed with the first LiveView release.* |
 | Solo time budget (16–24 h) | Daily `LOG.md` check against this schedule; cut early, not on Nov 8. |
 
 ## 10. Definition of done
