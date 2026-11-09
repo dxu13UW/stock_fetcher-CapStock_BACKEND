@@ -520,3 +520,12 @@ documented and reviewed. The reflection itself is on the portfolio card, in my w
   with HTTP clients, not browsers.
 - **Not solved:** the 2026-11-09 production OOM's cause is unknown (logs rolled over). `/health`
   makes the next one visible. Raising the machine to 512 MB is the remaining option (costs money).
+
+### Addendum: production scaled to 512 MB (2026-11-09)
+- `/health` showed the real cause of the OOM kills: at 256 MB the machine idled at only
+  ~12–17 MB available with no tabs open (BEAM ~103 MB, 40 MB of it loaded code, plus the JIT's
+  code memory and the OS). A class of 40 tabs plus page loads could tip it over.
+- Scaled to 512 MB (`fly scale memory 512`, my approval, roughly $1–2/month more). Now ~279 MB
+  available at idle, status "ok"; `/prices`, mock, and the React API all 200.
+- **Plan:** drop back to 256 MB after about a week (~2026-11-15). Before that, cut memory first
+  (load code on demand instead of all at boot), and check `/health` before and after.
