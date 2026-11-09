@@ -12,6 +12,7 @@ defmodule StockFetcher.Application do
         StockFetcher.Pruner,
         {Phoenix.PubSub, name: StockFetcher.PubSub}
       ] ++
+        health_sampler() ++
         session_janitor() ++
         [
           {StockFetcher.Mock.Streamer,
@@ -45,6 +46,13 @@ defmodule StockFetcher.Application do
 
     opts = [strategy: :one_for_one, name: StockFetcher.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # Samples server health every 5 s for the /health page; off in tests (they start their own).
+  defp health_sampler do
+    if Application.get_env(:stock_fetcher, :enable_health_sampler, true),
+      do: [StockFetcher.Health],
+      else: []
   end
 
   # Deletes a tab's private portfolio when the tab closes; off in tests (SQL sandbox).

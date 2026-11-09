@@ -35,6 +35,10 @@ defmodule StockFetcherWeb.Endpoint do
     ],
     longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
 
+  # GET /health first, so it skips everything below (static files, CORS, parsing, sessions,
+  # the router) and stays cheap when the server is under strain.
+  plug StockFetcherWeb.Plugs.HealthPage
+
   # Serves the built CSS/JS from priv/static/assets.
   plug Plug.Static,
     at: "/",

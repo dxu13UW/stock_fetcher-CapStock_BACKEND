@@ -498,3 +498,25 @@ documented and reviewed. The reflection itself is on the portfolio card, in my w
 - **Checked:** 189 tests (doctest, marker parsing, unknown id, terms in each area, none inside
   buttons or labels); in the browser: hover and focus tips, click opens the right term, Esc
   returns focus to the word, reopening is blank, light and dark.
+
+### Addendum: class-demo limits and a /health page (2026-11-08)
+- **Why:** my teacher and class will open Capstock tomorrow, probably from one campus network.
+  If the campus shares one public IP (NAT), the whole class counted as one client against the
+  per-IP limits, which were sized for one person: 30 LiveView connections a minute (every page
+  load or Live/Mock switch counts) and 20 `/api/stocks` requests a minute for React.
+- **Raised:** LiveView 30 → 200 per IP per minute; React API `/api/stocks` 20 → 120, orders
+  60 → 120, chart zoom 120 → 300. Fly's proxy cap (250 connections) still bounds the total, and
+  that cap is what protects the 256 MB machine.
+- **`/health`:** a self-refreshing page (and JSON at `?format=json`) with machine memory
+  available (`/proc/meminfo`, the number the OOM killer acts on), BEAM memory, open tabs,
+  processes, run queue, DB size, the limits, peaks since boot, and 10-minute charts. Built to
+  load under strain: the first plug in the endpoint (skips static, CORS, parsing, sessions,
+  router), no LiveView, no DB, no calls to other processes, inline CSS/SVG, not rate-limited.
+  `StockFetcher.Health` samples every 5 s into ETS; the page reads ETS directly.
+- **Checked:** 196 tests. Load test (plain HTTP, 20 clients rendering `/prices` for 10 s,
+  2,148 renders): `/health` p50 3.2 ms (2.7 idle), p95 23.5 ms, 1,347/1,347 OK.
+- **Lesson:** my first load test opened 40 headless Chromium tabs and crashed my 1.9 GB WSL
+  machine. The new page's "lowest since boot" recorded the dip (241.9 MB available). Load-test
+  with HTTP clients, not browsers.
+- **Not solved:** the 2026-11-09 production OOM's cause is unknown (logs rolled over). `/health`
+  makes the next one visible. Raising the machine to 512 MB is the remaining option (costs money).

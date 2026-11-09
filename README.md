@@ -124,6 +124,7 @@ flowchart LR
 | Route | Purpose |
 |---|---|
 | `GET /prices`, `/prices?source=mock` | LiveView app |
+| `GET /health` (`?format=json`) | Server health: memory, open tabs, processes, 10-min charts; built to load under strain |
 | `GET /api/health` | Health check |
 | `GET /api/stocks`, `GET /api/stocks/:ticker/intraday` | Price history for the React SPA (rate-limited) |
 | `GET /api/portfolio`, `POST /api/orders` | React trading panel (`{ticker, side, quantity}`; buy/sell only) |
@@ -182,7 +183,7 @@ mix phx.server                   # http://localhost:4000/prices?source=mock
 ```zsh
 mix format
 mix compile --warnings-as-errors
-mix test                         # 189 tests
+mix test                         # 196 tests
 ```
 
 ## Deploying (Fly.io)
@@ -198,7 +199,10 @@ fly deploy
   measure the memory of anything that loads data at boot.
 - **Abuse guards:** connection limits at Fly's proxy (`fly.toml`), per-IP connection and per-tab
   event limits in the LiveView, WebSocket frame caps, a memory ceiling per LiveView process, and
-  per-IP rate limits on the JSON API.
+  per-IP rate limits on the JSON API. The per-IP limits leave room for a classroom behind one
+  shared IP.
+- **Monitoring:** `/health` shows machine memory (what the OOM killer acts on), app memory, open
+  tabs and peaks since boot.
 
 ---
 
