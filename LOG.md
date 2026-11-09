@@ -400,3 +400,28 @@ origin checks. Missing: anything limiting LiveView, where every open tab is a se
   jumps rather than types.
 - **Lesson:** two listeners for the same key need an owner. Whoever acts on a key should mark
   it handled, and everyone else should check.
+
+### Glossary popup (2026-11-08)
+- **My last-minute plan:** a glossary of trading words for people who don't trade. Space twice
+  quickly opens it and blurs the page; Esc closes it; no state between opens; a hint at the top;
+  the same filter as the watchlist, except Backspace clears the whole filter at once.
+- **Built:** 38 terms in `StockFetcherWeb.Glossary` (plain data: a one-liner, an explanation, an
+  "In Capstock" note, aliases like TP/SL/slippage, related terms). A compile-time check fails the
+  build if a related term doesn't exist. A header button shows the Space + Space hint.
+- **Why browser-only:** the terms are rendered once, by a component with no assigns (LiveView
+  never re-renders it), inside `phx-update="ignore"`, so the hook can show, hide and reorder rows
+  directly. Opening, filtering and reading cost no round trip. The filter reuses `rank` and
+  `assignLabels` from `flash.js`, with terms and aliases standing in for tickers and names.
+  Definitions aren't searched: they would match almost everything and leave no free labels.
+- **Keys:** one capturing `keydown` listener on window runs before every other key handler.
+  While the glossary is open it claims every key, so jump keys and `/` behind the blur never
+  fire (the lesson from the flash/jump bug above). While it's closed it only watches Space, and
+  only outside text boxes, so the watchlist filter still types spaces. It also claims Space
+  outside text boxes, which fixes a quiet risk: Space used to press a focused button, including
+  an order button.
+- **Checked** in a real browser: one Space does nothing (no scroll); Space Space opens with the
+  blur; "st" labels Stop and Stop-loss; a label opens its term; "rr" + Enter opens R:R; Backspace
+  empties the filter; `b` while open filters instead of jumping to Buy quantity; Esc closes and
+  returns focus to the box you came from; reopening shows the intro again; Space on a focused
+  button no longer presses it; works at phone width and in dark mode. 186 tests.
+

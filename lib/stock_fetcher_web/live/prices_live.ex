@@ -27,6 +27,7 @@ defmodule StockFetcherWeb.PricesLive do
 
   alias StockFetcher.{Candles, MarketHours, Tickers, Trading}
   alias StockFetcher.Trading.{SaveFile, SessionJanitor}
+  alias StockFetcherWeb.Glossary
 
   @exit_fields ["quantity", "limit", "stop", "take_profit"]
 
@@ -658,6 +659,21 @@ defmodule StockFetcherWeb.PricesLive do
           >
             ⓘ How paper trading works
           </button>
+          <%!-- The hint for Space Space; a click opens the glossary too (no round trip). --%>
+          <button
+            id="glossary-button"
+            type="button"
+            phx-click={JS.dispatch("glossary:open", to: "#glossary")}
+            class="flex items-center gap-1.5 rounded-full border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            title="Trading words explained. Press Space twice to open, Esc to close."
+          >
+            Glossary
+            <span class="flex gap-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+              <kbd class="rounded border border-zinc-300 px-1 dark:border-zinc-700">Space</kbd>
+              <span aria-hidden="true">+</span>
+              <kbd class="rounded border border-zinc-300 px-1 dark:border-zinc-700">Space</kbd>
+            </span>
+          </button>
         </header>
         <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Source: {if @source == :mock, do: "mock stream (simulated)", else: "live market data"}
@@ -991,6 +1007,7 @@ defmodule StockFetcherWeb.PricesLive do
       </main>
 
       <.help_panel source={@source} />
+      <.glossary />
     </div>
     """
   end
@@ -1206,12 +1223,12 @@ defmodule StockFetcherWeb.PricesLive do
         </p>
         <p>
           <strong>Keyboard.</strong>
-          <kbd>/</kbd> searches the watchlist; press a result's pink letter to pick it. When you're
+          <kbd>/</kbd> searches the watchlist; press the letter next to a result to pick it. When you're
           not typing, every number box shows a small key at its right end, like the
           <kbd>/</kbd> in the search box: press that letter to jump there. The closed exit
           strategies show one too (<kbd>a</kbd> <kbd>d</kbd> <kbd>f</kbd> <kbd>g</kbd>): press it to
           open that panel. <kbd>Esc</kbd> leaves a box. Enter never places an order: order buttons
-          always take a click.
+          always take a click. <kbd>Space</kbd> <kbd>Space</kbd> opens the glossary of trading words.
         </p>
         <p>
           <strong>One limit.</strong>
@@ -1220,6 +1237,130 @@ defmodule StockFetcherWeb.PricesLive do
         </p>
       </div>
     </aside>
+    """
+  end
+
+  # Glossary popup (2026-11-08): trading words for people who don't trade. Space Space opens it
+  # (or the header button), Esc closes it. It has no state on purpose: every open starts from
+  # the same blank filter and intro, whatever term was showing when it closed.
+  #
+  # All in the browser. The terms are rendered once (the component takes no assigns, so
+  # LiveView never re-renders it) and phx-update="ignore" keeps patches out, so the Glossary
+  # hook in app.js can show, hide and reorder rows directly. Opening it costs no round trip and
+  # no server memory beyond the first render. The filter and its labels are the watchlist's
+  # flash.nvim rules (flash.js), except that Backspace clears the whole filter at once.
+  defp glossary(assigns) do
+    assigns = assign(assigns, :terms, Glossary.terms())
+
+    ~H"""
+    <div id="glossary" phx-hook="Glossary" phx-update="ignore">
+      <div
+        data-glossary-panel
+        role="dialog"
+        aria-modal="true"
+        aria-label="Glossary"
+        class="fixed inset-0 z-50 hidden"
+      >
+        <div data-glossary-backdrop class="absolute inset-0 bg-zinc-950/30 backdrop-blur-sm"></div>
+        <div class="relative mx-auto mt-[6vh] flex h-[min(88vh,44rem)] w-[min(56rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white text-sm shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
+          <div class="flex flex-wrap items-center gap-3 border-b border-zinc-200 p-3 dark:border-zinc-800">
+            <h2 class="font-semibold">Glossary</h2>
+            <label class="relative min-w-40 flex-1">
+              <span class="sr-only">Filter terms</span>
+              <input
+                type="search"
+                data-glossary-input
+                placeholder="Filter, e.g. stop or rr"
+                autocomplete="off"
+                spellcheck="false"
+                class="input w-full pr-28"
+              />
+              <span class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[10px] text-zinc-500">
+                <kbd class="rounded border border-zinc-300 px-1 dark:border-zinc-700">Backspace</kbd> clears
+              </span>
+            </label>
+            <span data-glossary-count class="text-xs text-zinc-500 dark:text-zinc-400">
+              {length(@terms)} terms
+            </span>
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">
+              <kbd class="rounded border border-zinc-300 px-1 dark:border-zinc-700">Esc</kbd> closes
+            </span>
+          </div>
+          <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
+            <ul
+              data-glossary-list
+              class="flex max-h-[30vh] shrink-0 flex-col overflow-y-auto border-b border-zinc-200 py-1 sm:max-h-none sm:w-72 sm:border-r sm:border-b-0 dark:border-zinc-800"
+            >
+              <li
+                :for={t <- @terms}
+                id={"glossary-#{t.id}"}
+                data-term-id={t.id}
+                data-term={t.term}
+                data-aliases={Enum.join(t.aliases, " / ")}
+              >
+                <button
+                  type="button"
+                  tabindex="-1"
+                  class="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <span class="flash-label mt-0.5" aria-hidden="true"></span>
+                  <span class="min-w-0">
+                    <span class="block font-medium">{t.term}</span>
+                    <span class="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t.short}</span>
+                  </span>
+                </button>
+              </li>
+              <li data-glossary-empty hidden class="px-3 py-2 text-zinc-500">
+                No term matches. <kbd class="rounded border border-zinc-300 px-1 dark:border-zinc-700">Backspace</kbd>
+                clears the filter.
+              </li>
+            </ul>
+            <div data-glossary-detail class="min-h-0 flex-1 overflow-y-auto p-4">
+              <div data-glossary-intro class="space-y-2 text-zinc-700 dark:text-zinc-300">
+                <p class="font-medium">Trading words, in plain English.</p>
+                <p>
+                  Type to filter, like the watchlist search: a letter appears next to each match,
+                  and pressing it opens that term. <kbd>Enter</kbd> opens the best match,
+                  <kbd>Backspace</kbd> clears the filter, and <kbd>Esc</kbd> closes the glossary. You can also
+                  click a term.
+                </p>
+                <p class="text-zinc-500 dark:text-zinc-400">
+                  New to trading? Start with Long, Short, Position, Stop-loss and Take-profit.
+                </p>
+              </div>
+              <article :for={t <- @terms} data-detail={t.id} hidden class="space-y-3">
+                <div>
+                  <h3 class="text-lg font-semibold">{t.term}</h3>
+                  <p :if={t.aliases != []} class="text-xs text-zinc-500 dark:text-zinc-400">
+                    Also: {Enum.join(t.aliases, ", ")}
+                  </p>
+                </div>
+                <p class="font-medium">{t.short}</p>
+                <p class="text-zinc-700 dark:text-zinc-300">{t.body}</p>
+                <p
+                  :if={t.in_app}
+                  class="rounded-lg bg-sky-50 px-3 py-2 text-sky-900 dark:bg-sky-950/40 dark:text-sky-200"
+                >
+                  <span class="font-semibold">In Capstock:</span> {t.in_app}
+                </p>
+                <div :if={t.related != []} class="flex flex-wrap items-center gap-1.5">
+                  <span class="text-xs text-zinc-500 dark:text-zinc-400">Related:</span>
+                  <button
+                    :for={rel <- t.related}
+                    type="button"
+                    tabindex="-1"
+                    data-goto={rel}
+                    class="rounded-full border border-zinc-300 px-2 py-0.5 text-xs hover:border-sky-400 dark:border-zinc-700"
+                  >
+                    {Glossary.get(rel).term}
+                  </button>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     """
   end
 

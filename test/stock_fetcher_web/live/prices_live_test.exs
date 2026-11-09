@@ -722,6 +722,28 @@ defmodule StockFetcherWeb.PricesLiveTest do
     end
   end
 
+  describe "glossary (2026-11-08)" do
+    test "renders every term once, inside an ignored container, hidden until opened", %{
+      conn: conn
+    } do
+      {:ok, view, html} = live(conn, ~p"/prices")
+
+      # The header hint opens it with a JS command, no server event.
+      assert has_element?(view, "#glossary-button", "Glossary")
+      assert html =~ "glossary:open"
+
+      assert has_element?(view, "#glossary[phx-hook=Glossary][phx-update=ignore]")
+      assert has_element?(view, "#glossary [data-glossary-panel].hidden")
+
+      for t <- StockFetcherWeb.Glossary.terms() do
+        assert has_element?(view, "#glossary-#{t.id}[data-term]")
+        assert has_element?(view, "#glossary [data-detail=#{t.id}][hidden]")
+      end
+
+      assert has_element?(view, "#glossary [data-detail=r-r] [data-goto=risk]", "Risk")
+    end
+  end
+
   describe "abuse and memory guards (2026-11-08)" do
     defp with_env(key, value) do
       previous = Application.get_env(:stock_fetcher, key)
