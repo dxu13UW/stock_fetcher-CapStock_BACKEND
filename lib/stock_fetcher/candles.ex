@@ -63,6 +63,8 @@ defmodule StockFetcher.Candles do
       source: source,
       interval: interval(source),
       candles: if(source == :mock, do: mock_history(), else: %{}),
+      # Official daily closes per ticker, for "% since previous close" (live only).
+      closes: %{},
       fetch_bars: Keyword.get(opts, :fetch_bars, source == :live),
       now_fn: Keyword.get(opts, :now_fn, &DateTime.utc_now/0)
     }
@@ -73,9 +75,19 @@ defmodule StockFetcher.Candles do
     {:ok, state}
   end
 
+  @doc "A ticker's recent official daily closes, oldest first: `[%{date: Date, close: float}]`."
+  def closes(source, ticker, name \\ nil) do
+    server = name || name(source)
+    if GenServer.whereis(server), do: GenServer.call(server, {:closes, ticker}), else: []
+  end
+
   @impl true
   def handle_call({:get, ticker}, _from, state) do
     {:reply, Map.get(state.candles, ticker, []), state}
+  end
+
+  def handle_call({:closes, ticker}, _from, state) do
+    {:reply, Map.get(state.closes, ticker, []), state}
   end
 
   @impl true
@@ -92,14 +104,9 @@ defmodule StockFetcher.Candles do
 
     state =
       if first? or MarketHours.market_open?(state.now_fn.()) do
-        case fetch_bars(state.now_fn.()) do
-          {:ok, bars} ->
-            Map.update!(state, :candles, &merge_bars(&1, bars))
-
-          {:error, reason} ->
-            Logger.warning("[Candles] Alpaca bars failed: #{inspect(reason)}")
-            state
-        end
+        state
+        |> refresh_candles()
+        |> refresh_closes()
       else
         state
       end
@@ -111,6 +118,137 @@ defmodule StockFetcher.Candles do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp refresh_candles(state) do
+    case fetch_bars(state.now_fn.()) do
+      {:ok, bars} ->
+        Map.update!(state, :candles, &merge_bars(&1, bars))
+
+      {:error, reason} ->
+        Logger.warning("[Candles] Alpaca bars failed: #{inspect(reason)}")
+        state
+    end
+  end
+
+  # One more small request (2026-11-09): 1-day SIP bars, whose close is the official close (the
+  # 4:00 PM closing auction). A 5-minute bar can't give it: the auction prints at 16:00:00, in
+  # the after-hours bar. 10 days covers a long weekend; 50 tickers x ~7 bars fits one page.
+  defp refresh_closes(state) do
+    if StockFetcher.Alpaca.Poller.configured?() do
+      now = state.now_fn.()
+
+      params = [
+        symbols: Enum.join(Tickers.all(), ","),
+        timeframe: "1Day",
+        start:
+          now |> DateTime.add(-10, :day) |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+        end:
+          now |> DateTime.add(-16, :minute) |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+        feed: "sip",
+        adjustment: "split",
+        limit: 1_000
+      ]
+
+      case fetch_pages(params, nil, %{}, 0, &daily_closes/1) do
+        {:ok, closes} ->
+          %{state | closes: closes}
+
+        {:error, reason} ->
+          Logger.warning("[Candles] Alpaca daily bars failed: #{inspect(reason)}")
+          state
+      end
+    else
+      state
+    end
+  end
+
+  @doc false
+  # Alpaca daily bars ({ticker => [bar]}) -> {ticker => [%{date, close}]}, oldest first. A daily
+  # bar's "t" is midnight New York time, so its New York date is the trading day.
+  def daily_closes(raw) do
+    raw
+    |> Enum.map(fn {ticker, bars} ->
+      {ticker,
+       bars
+       |> Enum.flat_map(fn
+         %{"t" => t, "c" => c} when is_number(c) ->
+           case DateTime.from_iso8601(t) do
+             {:ok, at, _} ->
+               [
+                 %{
+                   date: at |> DateTime.shift_zone!("America/New_York") |> DateTime.to_date(),
+                   close: c / 1
+                 }
+               ]
+
+             _ ->
+               []
+           end
+
+         _ ->
+           []
+       end)
+       |> Enum.sort_by(& &1.date, Date)}
+    end)
+    |> Enum.reject(fn {_t, list} -> list == [] end)
+    |> Map.new()
+  end
+
+  @doc """
+  The previous close for "% since previous close" (2026-11-09): the official close of the last
+  trading day before the current one, or nil.
+
+  The current trading day is today in New York, or Friday on a weekend. So during or after
+  today's session it's yesterday's close; before 9:30 it's the last session's close (Friday's on
+  a Monday morning); on a weekend it's Thursday's, and the change shows Friday's move.
+  Holidays aren't known: on one, it compares with the last session's close.
+  """
+  def prev_close(closes, now \\ DateTime.utc_now()) do
+    day = trading_day(now)
+
+    case closes |> Enum.filter(&(Date.compare(&1.date, day) == :lt)) |> List.last() do
+      nil -> nil
+      %{date: date, close: close} -> %{price: close, date: date, day: day}
+    end
+  end
+
+  @doc "Today's date in New York, or the Friday before on a weekend."
+  def trading_day(now \\ DateTime.utc_now()) do
+    date = now |> DateTime.shift_zone!("America/New_York") |> DateTime.to_date()
+
+    case Date.day_of_week(date) do
+      6 -> Date.add(date, -1)
+      7 -> Date.add(date, -2)
+      _ -> date
+    end
+  end
+
+  @doc """
+  The price a ticker's change "since open" is measured from (2026-11-08), or nil.
+
+    * `:live` - the open of the first candle in the latest regular session (9:30 ET today, or
+      the last trading day's before today's open; `MarketHours.get_intraday_bounds/1`). The SIP
+      bars start at 9:30 sharp, so that's the official opening price. nil until the session has
+      a candle (the first minutes after 9:30, before a tick arrives). Holidays aren't known, so
+      on one it measures from the last session the cache holds.
+    * `:mock` - mock prices trade around the clock, so there's no 9:30: the oldest candle on the
+      chart instead.
+  """
+  def day_open(candles, source, now \\ DateTime.utc_now())
+  def day_open([], _source, _now), do: nil
+
+  def day_open([first | _], :mock, _now),
+    do: %{price: first.open, time: first.time, kind: :mock}
+
+  def day_open(candles, :live, now) do
+    {start, stop} = MarketHours.get_intraday_bounds(now)
+    {from, to} = {DateTime.to_unix(start), DateTime.to_unix(stop)}
+
+    case Enum.find(candles, &(&1.time >= from and &1.time <= to)) do
+      nil -> nil
+      candle -> %{price: candle.open, time: candle.time, kind: :session}
+    end
+  end
 
   # --- Building candles ---
 
@@ -185,9 +323,10 @@ defmodule StockFetcher.Candles do
   # the next page is fetched, so only one page of raw JSON is alive at a time. The first
   # version kept every raw page (~40,000 decoded bar maps) and the 256 MB Fly machine was
   # OOM-killed at boot (2026-11-08).
-  defp fetch_pages(_params, _token, acc, 16), do: {:ok, acc}
+  defp fetch_pages(params, token, acc, page, finish \\ &finish/1)
+  defp fetch_pages(_params, _token, acc, 16, _finish), do: {:ok, acc}
 
-  defp fetch_pages(params, token, acc, page) do
+  defp fetch_pages(params, token, acc, page, finish) do
     params = if token, do: Keyword.put(params, :page_token, token), else: params
 
     options =
@@ -204,10 +343,12 @@ defmodule StockFetcher.Candles do
     case Req.get(options) do
       {:ok, %Req.Response{status: 200, body: %{"bars" => bars} = body}} ->
         # Pages run by symbol, then time, so a ticker split across pages continues in order.
-        acc = Map.merge(acc, finish(bars || %{}), fn _t, a, b -> Enum.take(a ++ b, -@keep) end)
+        acc = Map.merge(acc, finish.(bars || %{}), fn _t, a, b -> Enum.take(a ++ b, -@keep) end)
         next = body["next_page_token"]
 
-        if is_binary(next), do: fetch_pages(params, next, acc, page + 1), else: {:ok, acc}
+        if is_binary(next),
+          do: fetch_pages(params, next, acc, page + 1, finish),
+          else: {:ok, acc}
 
       {:ok, %Req.Response{status: status}} ->
         {:error, {:http_status, status}}

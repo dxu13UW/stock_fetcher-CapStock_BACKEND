@@ -342,6 +342,19 @@ defmodule StockFetcherWeb.Glossary do
       related: ["stop-loss", "r-r", "position-size", "target"]
     },
     %{
+      id: "settlement",
+      term: "Settlement",
+      aliases: ["settle", "settled", "t+1", "unsettled cash"],
+      short: "The actual transfer of shares and cash, which happens after the trade.",
+      body:
+        "In the US that's T+1: one business day after the trade. Prices are recorded at " <>
+          "execution, not at settlement, so the trade's price is final the moment it happens.",
+      in_app:
+        "Capstock settles instantly: cash and shares change the moment an order fills. A real " <>
+          "broker may show cash as unsettled until the next business day.",
+      related: ["trade", "fill", "buying-power"]
+    },
+    %{
       id: "share",
       term: "Share",
       aliases: ["stock", "quantity", "qty"],
@@ -423,6 +436,20 @@ defmodule StockFetcherWeb.Glossary do
       body: "Every listed stock has one. Traders say the ticker rather than the company name.",
       in_app: "Pick one in the watchlist, or press / to search by ticker or company name.",
       related: ["watchlist", "share"]
+    },
+    %{
+      id: "trade",
+      term: "Trade",
+      aliases: ["trades", "print", "tape", "tick"],
+      short: "A buyer's order and a seller's order matched at one price and quantity.",
+      body:
+        "The moment of the match is what gets timestamped and printed to the tape, the public " <>
+          "record of every trade. Prices, candles and volume are all built from these prints.",
+      in_app:
+        "Live prices are the latest trades (IEX for 45 tickers, Finnhub for 5), and each candle " <>
+          "is built from the trades in its 5-minute window. Your paper orders fill at the price " <>
+          "on screen; no real trade happens.",
+      related: ["fill", "candlestick", "settlement", "sip"]
     },
     %{
       id: "trigger",

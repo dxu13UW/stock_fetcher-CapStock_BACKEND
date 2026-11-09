@@ -95,6 +95,30 @@ const Chart = {
     })
     this.last = null
 
+    // Today's open (9:30 ET, live only): a thin dashed vertical line. Lightweight Charts v4
+    // has no vertical lines, so it's a div over the chart, moved to the open's x position
+    // whenever the time axis changes (pan, zoom, new candles) or the chart resizes.
+    this.openTime = null
+    this.openLine = document.createElement("div")
+    this.openLine.className = "chart-open-line"
+    this.openLine.hidden = true
+    this.el.appendChild(this.openLine)
+    this.placeOpenLine = () => {
+      const x = this.openTime == null ? null : this.chart.timeScale().timeToCoordinate(this.openTime)
+      const paneWidth = this.el.clientWidth - this.chart.priceScale("right").width()
+      if (x == null || x < 0 || x > paneWidth) { this.openLine.hidden = true; return }
+      this.openLine.hidden = false
+      this.openLine.style.left = `${Math.round(x)}px`
+      this.openLine.style.height = `${this.el.clientHeight - this.chart.timeScale().height()}px`
+    }
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this.placeOpenLine())
+    this.resizer = new ResizeObserver(() => requestAnimationFrame(this.placeOpenLine))
+    this.resizer.observe(this.el)
+    this.handleEvent("chart:open", ({time}) => {
+      this.openTime = time == null ? null : localTime(time)
+      this.placeOpenLine()
+    })
+
     // Dotted lines for the focused open order (server sends [] to clear).
     this.handleEvent("chart:lines", ({lines}) => {
       this.lines.forEach((line) => this.series.removePriceLine(line))
@@ -115,12 +139,14 @@ const Chart = {
       this.chart.timeScale().fitContent()
     })
 
-    this.handleEvent("chart:data", ({interval, candles}) => {
+    this.handleEvent("chart:data", ({interval, candles, open_time}) => {
       this.interval = interval
       const data = candles.map((c) => ({...c, time: localTime(c.time)}))
       this.series.setData(data)
       this.last = data.length ? {...data[data.length - 1]} : null
+      this.openTime = open_time == null ? null : localTime(open_time)
       this.chart.timeScale().fitContent()
+      requestAnimationFrame(this.placeOpenLine)
     })
 
     this.handleEvent("chart:tick", ({price, time}) => {
@@ -142,6 +168,7 @@ const Chart = {
   },
   destroyed() {
     this.observer?.disconnect()
+    this.resizer?.disconnect()
     this.chart?.remove()
   },
   theme() {

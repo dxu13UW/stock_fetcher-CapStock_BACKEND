@@ -535,3 +535,57 @@ documented and reviewed. The reflection itself is on the portfolio card, in my w
   zone. The server marks each time with its UTC instant (`<time datetime=…>`), and a 5-line
   inline script rewrites it with `toLocaleTimeString`; with JavaScript off it still reads UTC.
   The JSON keeps raw UTC milliseconds. 197 tests.
+
+### Addendum: % since open on the chart (2026-11-09)
+- **My request:** the selected ticker's change since today's regular-session open, left of the
+  price at the top right of the chart.
+- **Live:** measured from the open of the first 5-minute SIP bar of the latest session
+  (`MarketHours.get_intraday_bounds/1`: 9:30 ET today, or the last trading day's before today's
+  open). The cache already holds those bars, so no new API calls. Hover shows the open price
+  and date ("Change since the 9:30 ET open on Mon Nov 9 ($345.00)"). Re-checked on the selected
+  ticker's ticks, so it rolls over at 9:30 with the page open. Holidays aren't known: on one it
+  measures from the last session in the cache.
+- **Mock:** no 9:30 (it trades around the clock), so it reads "since start": the change since
+  the oldest candle on the chart.
+- `Candles.day_open/3` (pure, tested for today's session, the previous session before 9:30,
+  no candle yet, and mock). 201 tests. Checked live during market hours: AAPL +1.96% from a
+  $345.00 open at $351.75.
+- **Open line (same day):** a thin dashed grey vertical line on the chart at today's 9:30 ET
+  open (live only; mock's "since start" is just the chart's left edge). Lightweight Charts v4
+  has no vertical lines, so the Chart hook draws a div over the chart at
+  `timeToCoordinate(open)` and moves it on every time-axis change and resize. Grey like a
+  session break, because green/red, blue and orange already mean something on this chart.
+  The server sends `open_time` with `chart:data`, and `chart:open` when the session rolls over.
+- **Changed my mind (same day): % since the previous close instead of since the open.** It's
+  the standard daily change. The official close is the 4:00 PM closing auction, which prints at
+  16:00:00 and so falls in the after-hours 5-minute bar, so the candle cache now also fetches
+  Alpaca's 1-day SIP bars (one request for all 50 tickers, ~10 days, at boot and every 30 min
+  during market hours). Rule (`Candles.prev_close/2`): the close of the last trading day before
+  the current one (today in New York, or Friday on a weekend): yesterday's during or after the
+  session, Friday's before Monday's open, Thursday's on a weekend (so it shows Friday's move).
+  Hover: "Change since the previous close, Fri Nov 6 ($342.37, the official 4:00 PM ET close)".
+  Mock keeps "since start"; the 9:30 line stays. 206 tests. Checked live: AAPL +2.55%,
+  NVDA -4.68%, QBTS +9.64% vs Friday's closes.
+- **Dev-only scare while testing:** the running dev server's chart cache predated the change
+  (its state had no `closes`), so it crashed when asked; the crash message carried the whole
+  cache (MBs of candles), and the tab process that received it hit the 50 MB per-tab heap limit
+  and was killed, as designed. A deploy restarts from scratch, so production can't hit this.
+
+### Addendum: keys as code chips in the help popup (2026-11-09)
+- Plain `<kbd>` keys (help popup, glossary intro) now look like code: monospace on a small
+  bordered chip, in both themes. Wrapped the keys that weren't marked: `Enter` and the
+  number-box letters (`b s q e x t n`).
+- Fixed a wrapping glitch from the glossary underlines: a term is a button, and browsers break
+  lines on either side of one, so "cancelled (" ended a line and "OCO)." started the next.
+  Punctuation touching a term now goes in one no-wrap span with it. 206 tests.
+
+### Addendum: Trade and Settlement in the glossary (2026-11-09)
+- My definitions, lightly edited: **Trade** (a buyer's and a seller's order matched at one
+  price and quantity; that moment is timestamped and printed to the tape, and candles are built
+  from these prints) and **Settlement** (the actual transfer of shares and cash, T+1 in the US;
+  prices are recorded at execution, not settlement). Each has an "In Capstock" note (live
+  prices are latest trades; Capstock settles instantly). 40 terms.
+- Underlined "trade" only in its execution sense: "real trades" in the help popup and "when
+  the price trades above/below it" in the take-profit tutorials. Not in "one bad trade" or
+  "John's QBTS trade", where it means a whole position. "Settle" doesn't appear in the app's
+  text yet. 206 tests.
