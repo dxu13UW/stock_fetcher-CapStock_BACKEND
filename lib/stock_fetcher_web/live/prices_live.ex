@@ -92,6 +92,10 @@ defmodule StockFetcherWeb.PricesLive do
         },
         # All four exit panels start closed, so the sidebar shows every choice at once (2026-11-08).
         open_panel: nil,
+        # The selected ticker's session open (the chart's 9:30 line; mock's "since start") and
+        # previous close (live "% since previous close"). Both set by push_chart.
+        day_open: nil,
+        prev_close: nil,
         panels: @panels,
         portfolio: nil,
         orders: [],
@@ -301,7 +305,10 @@ defmodule StockFetcherWeb.PricesLive do
 
     socket =
       if price.ticker == socket.assigns.selected,
-        do: push_event(socket, "chart:tick", %{price: price.price, time: unix(price.timestamp)}),
+        do:
+          socket
+          |> push_event("chart:tick", %{price: price.price, time: unix(price.timestamp)})
+          |> refresh_day_open(),
         else: socket
 
     {:noreply, assign(socket, market_open: socket.assigns.source == :mock or market_open?())}
@@ -593,12 +600,61 @@ defmodule StockFetcherWeb.PricesLive do
   # call per page view). Later ticks for it go out as "chart:tick" from handle_info.
   defp push_chart(socket) do
     %{source: source, selected: ticker} = socket.assigns
+    candles = Candles.get(source, ticker)
+    open = Candles.day_open(candles, source)
 
-    push_event(socket, "chart:data", %{
+    socket
+    |> assign(day_open: open, prev_close: prev_close(source, ticker))
+    |> push_event("chart:data", %{
       ticker: ticker,
       interval: Candles.interval(source),
-      candles: Candles.get(source, ticker)
+      candles: candles,
+      open_time: open_line_time(open)
     })
+  end
+
+  defp prev_close(:live, ticker), do: Candles.prev_close(Candles.closes(:live, ticker))
+
+  defp prev_close(:mock, _ticker), do: nil
+
+  # The chart's vertical "today's open" line: only for a real session open (live). Mock's
+  # "since start" is just the oldest candle, the chart's left edge, so it gets no line.
+  defp open_line_time(%{kind: :session, time: time}), do: time
+  defp open_line_time(_open), do: nil
+
+  # The selected ticker's open for "% since open" goes stale when a new session starts while
+  # the page is open (9:30 ET), and is nil in the minutes before the session's first candle.
+  # Checked on the selected ticker's ticks; Candles is only asked again when it's missing or
+  # from an earlier session. Mock has no sessions, so its open never goes stale.
+  defp refresh_day_open(%{assigns: %{source: :live}} = socket) do
+    socket |> refresh_session_open() |> refresh_prev_close()
+  end
+
+  defp refresh_day_open(socket), do: socket
+
+  # The previous close changes when the trading day does (midnight in New York), and is nil
+  # until Candles has the daily bars (a few seconds after boot).
+  defp refresh_prev_close(%{assigns: %{prev_close: prev}} = socket) do
+    if prev == nil or prev.day != Candles.trading_day(),
+      do: assign(socket, prev_close: prev_close(:live, socket.assigns.selected)),
+      else: socket
+  end
+
+  defp refresh_session_open(%{assigns: %{day_open: open}} = socket) do
+    {start, _} = MarketHours.get_intraday_bounds()
+
+    if open == nil or open.time < DateTime.to_unix(start) do
+      new_open = Candles.day_open(Candles.get(:live, socket.assigns.selected), :live)
+
+      if new_open == open,
+        do: socket,
+        else:
+          socket
+          |> assign(day_open: new_open)
+          |> push_event("chart:open", %{time: open_line_time(new_open)})
+    else
+      socket
+    end
   end
 
   @impl true
@@ -714,8 +770,11 @@ defmodule StockFetcherWeb.PricesLive do
             <div class="flex items-baseline gap-2">
               <span class="text-lg font-semibold">{@selected}</span>
               <span class="truncate text-sm text-zinc-500 dark:text-zinc-400">{Tickers.name(@selected)}</span>
-              <span id="chart-price" class="ml-auto font-semibold tabular-nums">
-                {price_text(@prices[@selected])}
+              <span class="ml-auto flex items-baseline gap-2">
+                <.day_change ref={change_ref(@source, @prev_close, @day_open)} price={@prices[@selected]} />
+                <span id="chart-price" class="font-semibold tabular-nums">
+                  {price_text(@prices[@selected])}
+                </span>
               </span>
               <%!-- Back to the automatic view after panning/zooming. Runs in the browser:
                    JS.dispatch fires a DOM event the Chart hook listens for, no server round trip. --%>
@@ -734,7 +793,7 @@ defmodule StockFetcherWeb.PricesLive do
             </p>
             <%!-- The hook owns everything inside (phx-update="ignore"): LiveView sends data as
                  events, the chart library draws it. --%>
-            <div id="chart" phx-hook="Chart" phx-update="ignore" class="mt-2 h-64 w-full"></div>
+            <div id="chart" phx-hook="Chart" phx-update="ignore" class="relative mt-2 h-64 w-full"></div>
           </section>
 
           <section id="trade" class="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
@@ -1204,7 +1263,7 @@ defmodule StockFetcherWeb.PricesLive do
         </p>
         <p>
           <strong>Prices.</strong>
-          <.rich text="Live: 5 [[ticker|tickers]] from Finnhub and 45 from Alpaca's free [[iex|IEX]] feed (real trades on one US exchange, so within a cent or so of the full market). Live orders only fill [[market-hours|9:30–16:00 ET]] on trading days. Mock: simulated prices that move around the clock, for practice any time." />
+          <.rich text="Live: 5 [[ticker|tickers]] from Finnhub and 45 from Alpaca's free [[iex|IEX]] feed (real [[trade|trades]] on one US exchange, so within a cent or so of the full market). Live orders only fill [[market-hours|9:30–16:00 ET]] on trading days. Mock: simulated prices that move around the clock, for practice any time." />
         </p>
         <p>
           <strong>Orders.</strong>
@@ -1221,10 +1280,12 @@ defmodule StockFetcherWeb.PricesLive do
           <strong>Keyboard.</strong>
           <kbd>/</kbd> searches the watchlist; press the letter next to a result to pick it. When you're
           not typing, every number box shows a small key at its right end, like the
-          <kbd>/</kbd> in the search box: press that letter to jump there. The closed exit
-          strategies show one too (<kbd>a</kbd> <kbd>d</kbd> <kbd>f</kbd> <kbd>g</kbd>): press it to
-          open that panel. <kbd>Esc</kbd> leaves a box. Enter never places an order: order buttons
-          always take a click. <kbd>Space</kbd> <kbd>Space</kbd> opens the glossary of trading words.
+          <kbd>/</kbd> in the search box (<kbd>b</kbd> <kbd>s</kbd> <kbd>q</kbd> <kbd>e</kbd>
+          <kbd>x</kbd> <kbd>t</kbd> <kbd>n</kbd>, and free letters on the Move boxes you can see):
+          press that letter to jump there. The closed exit strategies show one too (<kbd>a</kbd>
+          <kbd>d</kbd> <kbd>f</kbd> <kbd>g</kbd>): press it to open that panel. <kbd>Esc</kbd>
+          leaves a box. <kbd>Enter</kbd> never places an order: order buttons always take a click.
+          <kbd>Space</kbd> <kbd>Space</kbd> opens the glossary of trading words.
         </p>
         <p>
           <strong>One limit.</strong>
@@ -1234,6 +1295,55 @@ defmodule StockFetcherWeb.PricesLive do
       </div>
     </aside>
     """
+  end
+
+  # The day's change next to the chart's price. Live (2026-11-09): since the previous close,
+  # the official close of the last trading day (Candles.prev_close/2), as trading apps show it.
+  # Mock trades around the clock with no closes, so: since the oldest candle on the chart.
+  # Hidden until both a reference price and a current price exist.
+  attr :ref, :map, default: nil
+  attr :price, :map, default: nil
+
+  defp day_change(%{ref: %{price: ref}, price: %{price: price}} = assigns)
+       when is_number(price) and ref > 0 do
+    pct = (price - ref) * 100 / ref
+    assigns = assign(assigns, pct: pct, title: day_change_title(assigns.ref))
+
+    ~H"""
+    <span id="chart-change" title={@title} class="flex items-baseline gap-1 text-sm tabular-nums">
+      <span class={["font-semibold", change_class(@pct)]}>{format_pct(@pct)}</span>
+      <span class="text-xs text-zinc-500 dark:text-zinc-400">
+        {if @ref.kind == :mock, do: "since start", else: "since prev close"}
+      </span>
+    </span>
+    """
+  end
+
+  defp day_change(assigns), do: ~H""
+
+  defp change_ref(:live, %{price: price, date: date}, _open),
+    do: %{price: price, date: date, kind: :prev_close}
+
+  defp change_ref(:mock, _prev, %{price: price}), do: %{price: price, kind: :mock}
+  defp change_ref(_source, _prev, _open), do: nil
+
+  defp day_change_title(%{kind: :mock, price: ref}),
+    do:
+      "Mock prices trade around the clock, so this is the change since the oldest candle on " <>
+        "the chart ($#{format_price(ref)})."
+
+  defp day_change_title(%{kind: :prev_close, price: ref, date: date}),
+    do:
+      "Change since the previous close, #{Calendar.strftime(date, "%a %b %-d")} " <>
+        "($#{format_price(ref)}, the official 4:00 PM ET close)."
+
+  defp change_class(pct) when pct > 0, do: "text-emerald-700 dark:text-emerald-400"
+  defp change_class(pct) when pct < 0, do: "text-rose-700 dark:text-rose-400"
+  defp change_class(_), do: "text-zinc-600 dark:text-zinc-300"
+
+  defp format_pct(pct) do
+    sign = if pct > 0, do: "+", else: ""
+    sign <> :erlang.float_to_binary(pct, decimals: 2) <> "%"
   end
 
   # Glossary terms in the page's own text (2026-11-08). A term has a dotted underline in the
@@ -1262,12 +1372,50 @@ defmodule StockFetcherWeb.PricesLive do
   defp rich_html(text) do
     text
     |> Glossary.split_marked()
+    |> glue_punctuation()
     |> Enum.map(fn
-      {:term, id, label} -> term_iodata(id, label)
-      part -> escape_html(part)
+      {:glued, before, {:term, id, label}, rest} ->
+        [~s(<span class="whitespace-nowrap">), escape_html(before), term_iodata(id, label)] ++
+          [escape_html(rest), "</span>"]
+
+      part ->
+        escape_html(part)
     end)
     |> Phoenix.HTML.raw()
   end
+
+  # A term is a button, and browsers may break a line on either side of one, which strands
+  # punctuation: "cancelled (" at a line's end, "OCO)." on the next. So the characters touching a
+  # term (no space between) go in one no-wrap span with it.
+  defp glue_punctuation(parts), do: glue(parts, [])
+
+  defp glue([], acc), do: Enum.reverse(acc)
+
+  defp glue([{:term, _, _} = term | rest], acc) do
+    {before, acc} =
+      case acc do
+        [text | earlier] when is_binary(text) ->
+          [_, keep, touching] = Regex.run(~r/^(.*?)(\S*)$/s, text)
+          {touching, [keep | earlier]}
+
+        _ ->
+          {"", acc}
+      end
+
+    {after_text, rest} =
+      case rest do
+        [text | later] when is_binary(text) ->
+          [_, touching, keep] = Regex.run(~r/^(\S*)(.*)$/s, text)
+          {touching, [keep | later]}
+
+        _ ->
+          {"", rest}
+      end
+
+    glue(rest, [{:glued, before, term, after_text} | acc])
+  end
+
+  defp glue([text | rest], acc), do: glue(rest, [text | acc])
 
   defp term_iodata(id, label) do
     t = Glossary.fetch!(id)
@@ -1588,8 +1736,8 @@ defmodule StockFetcherWeb.PricesLive do
       {"Goal", "[[long|Buy]], then sell automatically once the price reaches your target."},
       {"How",
        "Set an [[entry]] below the current price; it [[fill|fills]] when the price dips below it. " <>
-         "Set the [[take-profit]] above the entry. When the price trades above it, the shares sell " <>
-         "at the take-profit."},
+         "Set the [[take-profit]] above the entry. When the price [[trade|trades]] above it, the " <>
+         "shares sell at the take-profit."},
       {"Why",
        "You pick the [[exit]] while you're calm, not in the moment. John takes half off at the " <>
          "first opposing zone; sell part of the [[position]] and let the rest run."}
@@ -1615,8 +1763,8 @@ defmodule StockFetcherWeb.PricesLive do
       {"Goal", "Profit from a fall: [[short]] high, [[cover]] automatically at a lower target."},
       {"How",
        "Set an [[entry]] above the current price; the short opens when the price rises above " <>
-         "it. Set the [[take-profit]] below the entry. When the price trades below it, the short " <>
-         "is covered."},
+         "it. Set the [[take-profit]] below the entry. When the price [[trade|trades]] below it, the " <>
+         "short is covered."},
       {"Why",
        "John's QBTS trade: short a parabolic run back into a supply zone, cover half at the " <>
          "next demand zone. The target is planned before the trade, not chased."}

@@ -29,7 +29,7 @@ defmodule StockFetcherWeb.GlossaryTest do
     words = MapSet.new(Glossary.terms(), & &1.term)
 
     for word <-
-          ~w(Long Short Entry Exit Position Take-profit Stop-loss Stop Cover Risk Target R:R OCO) do
+          ~w(Long Short Entry Exit Position Take-profit Stop-loss Stop Cover Risk Target R:R OCO Trade Settlement) do
       assert word in words, "missing #{word}"
     end
   end

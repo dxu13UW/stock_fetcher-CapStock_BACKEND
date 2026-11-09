@@ -754,6 +754,48 @@ defmodule StockFetcherWeb.PricesLiveTest do
     end
   end
 
+  describe "day change and the open line (2026-11-08/09)" do
+    test "the chart header shows the change from the open, left of the price", %{conn: conn} do
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+      select(view, "QBTS")
+
+      %{price: open} =
+        StockFetcher.Candles.day_open(StockFetcher.Candles.get(:mock, "QBTS"), :mock)
+
+      broadcast_price("QBTS", open * 1.05, "stocks:mock:extra")
+      assert has_element?(view, "#chart-change", "+5.00%")
+      assert has_element?(view, "#chart-change", "since start")
+      assert has_element?(view, "#chart-change .text-emerald-700")
+      assert render(view) =~ ~r/id="chart-change"[\s\S]*id="chart-price"/
+
+      broadcast_price("QBTS", open * 0.98, "stocks:mock:extra")
+      assert has_element?(view, "#chart-change", "-2.00%")
+      assert has_element?(view, "#chart-change .text-rose-700")
+    end
+
+    test "live: the change is since the previous close", %{conn: conn} do
+      # Give the live candle cache a daily close for this ticker (in tests it fetches nothing).
+      :sys.replace_state(StockFetcher.Candles.name(:live), fn state ->
+        put_in(state, [:closes, "ZZP"], [%{date: ~D[2020-01-02], close: 10.0}])
+      end)
+
+      {:ok, view, _} = live(conn, ~p"/prices")
+      broadcast_price("ZZP", 10.5)
+      select(view, "ZZP")
+
+      assert has_element?(view, "#chart-change", "+5.00%")
+      assert has_element?(view, "#chart-change", "since prev close")
+      assert has_element?(view, ~s|#chart-change[title*="previous close, Thu Jan 2"]|)
+    end
+
+    test "the chart's open line: mock has no 9:30, so no line", %{conn: conn} do
+      {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+      assert_push_event(view, "chart:data", %{ticker: "AAPL", open_time: nil})
+      # The hook positions the line over the chart, so the chart box is its positioning parent.
+      assert has_element?(view, "#chart.relative[phx-hook=Chart]")
+    end
+  end
+
   describe "glossary (2026-11-08)" do
     test "renders every term once, inside an ignored container, hidden until opened", %{
       conn: conn
@@ -802,6 +844,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
              )
 
       assert has_element?(view, "#help-panel button.term[data-term-link=oco]", "OCO")
+      assert has_element?(view, "#help-panel button.term[data-term-link=trade]", "trades")
 
       assert has_element?(
                view,
@@ -815,6 +858,10 @@ defmodule StockFetcherWeb.PricesLiveTest do
       view |> element("#exit-form-long_sl button", "Example prices") |> render_click()
       assert has_element?(view, "#exit-form-long_sl button.term[data-term-link=r-r]", "R:R")
       assert has_element?(view, "#exit-form-long_sl", "risk $25.00")
+
+      # Punctuation touching a term stays on its line: "(OCO)." can't break after "(".
+      assert render(view) =~
+               ~r/<span class="whitespace-nowrap">\(<button[^>]*data-term-link="oco"[^>]*>OCO<\/button>\)\.<\/span>/
 
       # Never inside a button (a click on Buy must only buy) or a label.
       refute has_element?(view, "button button")

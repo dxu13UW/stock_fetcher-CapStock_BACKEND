@@ -48,6 +48,9 @@ and an existing **React SPA**, and both were measured against each other on iden
   1-minute candles on the mock stream. Times in the viewer's own time zone (PST, CST, …).
 - **Click an open order** to draw its take-profit (blue) and stop-loss (orange) on the chart.
 - **⟲ Reset view** returns the chart to automatic after you pan or zoom.
+- **% since previous close** next to the price: the change since the last trading day's
+  official close (live), or since the oldest candle on the chart (mock, which trades around the
+  clock). A dashed line marks today's 9:30 ET open.
 
 ### Learn and plan
 - **Exit-strategy sidebar:** Long/Short × take-profit/stop-loss, each with a goal/how/why
@@ -56,7 +59,7 @@ and an existing **React SPA**, and both were measured against each other on iden
   exits. **Order history** tags how each order was placed: manual, take-profit, stop-loss or
   limit entry.
 - A **"How paper trading works"** panel.
-- A **glossary** of 38 trading words (long, short, stop-loss, R:R, OCO…) in plain English, each
+- A **glossary** of 40 trading words (long, short, stop-loss, R:R, OCO, settlement…) in plain English, each
   with how Capstock uses it. **Space Space** opens it over a blurred page; **Esc** closes it.
   Those words are dotted-underlined in the app's explanations: hover for a one-line definition,
   click to open the glossary there.

@@ -46,6 +46,27 @@
   @apply bg-fuchsia-500/25 text-fuchsia-200 shadow-none ring-1 ring-fuchsia-400/40;
 }
 
+/* Today's 9:30 ET open on the chart: a thin dashed vertical line, positioned by the Chart
+   hook. Grey like a session break, since green/red, blue and orange already mean something here.
+   pointer-events: none, so the chart still pans and shows its crosshair through it. */
+.chart-open-line {
+  position: absolute;
+  top: 0;
+  width: 0;
+  border-left: 1px dashed #a1a1aa;
+  pointer-events: none;
+  z-index: 2;
+}
+[data-theme=dark] .chart-open-line {
+  border-left-color: #71717a;
+}
+
+/* Keys written in explanatory text (the help popup, the glossary intro): code-style chips.
+   Only plain <kbd> tags; the small key hints elsewhere carry their own classes. */
+kbd:not([class]) {
+  @apply rounded border border-zinc-300 bg-zinc-100 px-1 py-px font-mono text-[0.85em] text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100;
+}
+
 /* Glossary terms in the page's text: a dotted underline in the text's own colour (colour
    already means buy/sell, P/L, take-profit and stop-loss here). Solid on hover or focus. */
 .term {
