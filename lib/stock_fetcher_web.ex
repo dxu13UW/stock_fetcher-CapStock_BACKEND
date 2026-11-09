@@ -6,7 +6,7 @@ defmodule StockFetcherWeb do
   so every LiveView and component gets the same imports without repeating them.
   """
 
-  def static_paths, do: ~w(assets favicon.ico robots.txt)
+  def static_paths, do: ~w(assets favicon.ico favicon.svg apple-touch-icon.png robots.txt)
 
   def live_view do
     quote do

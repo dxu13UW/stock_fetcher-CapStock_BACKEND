@@ -10,6 +10,22 @@ defmodule StockFetcherWeb.PricesLiveTest do
   # The price topics are global, so another test's broadcast could reach these LiveViews.
   # Each test uses a ZZ* ticker no other test uses and only asserts on it.
 
+  test "the page links its tab icon, and the icon files are served", %{conn: conn} do
+    html = conn |> get(~p"/prices") |> html_response(200)
+    assert html =~ ~s(rel="icon" href="/favicon.svg")
+
+    for {path, type} <- [
+          {"/favicon.svg", "image/svg+xml"},
+          {"/favicon.ico", "image/vnd.microsoft.icon"},
+          {"/apple-touch-icon.png", "image/png"}
+        ] do
+      conn = get(build_conn(), path)
+      assert conn.status == 200, path
+      assert [content_type | _] = get_resp_header(conn, "content-type")
+      assert content_type =~ type
+    end
+  end
+
   test "renders the prices page", %{conn: conn} do
     # live/2 does both mounts: the HTTP render, then the connected (WebSocket) one.
     {:ok, _view, html} = live(conn, ~p"/prices")
