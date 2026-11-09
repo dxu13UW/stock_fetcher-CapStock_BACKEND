@@ -472,3 +472,29 @@ origin checks. Missing: anything limiting LiveView, where every open tab is a se
 metrics and the gap between prediction and result (Nov 7), the production OOM (Nov 8), the
 double-handled key bug (Nov 8), and the Nov 7–8 switch to the agent writing code while I
 documented and reviewed. The reflection itself is on the portfolio card, in my words.
+
+### Addendum: exit panels start closed (2026-11-08, after submission prep)
+- **My request:** Long · stop-loss opened on page load and pushed the two Short panels out of
+  view. Now all four start closed (`open_panel: nil`), so every choice shows at once; a click or
+  its key (a d f g) opens one.
+- Tests that used the Long · stop-loss form now open it first (`open_panel/2` helper), and the
+  accordion test checks that all four start closed. 186 tests.
+
+### Addendum: glossary terms marked in the page (2026-11-08)
+- **Asked how to make glossary words stand out; chose:** a dotted underline in the text's own
+  colour, a one-line definition on hover or keyboard focus, and a click that opens the glossary
+  at that term. Not a new colour (colour already means buy/sell, P/L, take-profit, stop-loss),
+  not a new font (monospace already means prices and keys), not bold (reads as "important").
+- **Where:** explanatory text only, first mention per block: exit-panel tutorials, the risk
+  preview, the help panel, the Short selling note, the chart caption, the trade card subtitle,
+  the market-closed banner, Positions headers (Qty, Avg cost, P/L). 22 terms on load. Never
+  inside a button or label: a click on Buy must only buy.
+- **How:** text uses markers (`[[entry]]`, `[[fill|fills]]`) parsed by
+  `Glossary.split_marked/1`; an unknown id raises, so a typo fails a test instead of shipping.
+  Terms are `<button type="button">` (keyboard-reachable, never submits a form), built as a
+  string so no formatter whitespace lands before punctuation. One shared `position: fixed`
+  tooltip on `<body>`, because a tooltip inside the term would be clipped by the scrolling
+  sidebar and panels. The glossary stays stateless: opening at a term is just an entry point.
+- **Checked:** 189 tests (doctest, marker parsing, unknown id, terms in each area, none inside
+  buttons or labels); in the browser: hover and focus tips, click opens the right term, Esc
+  returns focus to the word, reopening is blank, light and dark.

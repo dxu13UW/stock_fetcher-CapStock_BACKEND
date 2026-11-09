@@ -3,6 +3,8 @@ defmodule StockFetcherWeb.GlossaryTest do
 
   alias StockFetcherWeb.Glossary
 
+  doctest StockFetcherWeb.Glossary
+
   test "every term has an id, a word, a one-liner and an explanation; ids are unique" do
     terms = Glossary.terms()
 
@@ -35,5 +37,20 @@ defmodule StockFetcherWeb.GlossaryTest do
   test "terms come alphabetically" do
     names = Enum.map(Glossary.terms(), &String.downcase(&1.term))
     assert names == Enum.sort(names)
+  end
+
+  describe "split_marked/1" do
+    test "plain text stays one string; markers become terms with their labels" do
+      assert Glossary.split_marked("no terms here") == ["no terms here"]
+
+      assert Glossary.split_marked("[[r-r|R:R]] 1:2 and [[oco|OCO]].") ==
+               [{:term, "r-r", "R:R"}, " 1:2 and ", {:term, "oco", "OCO"}, "."]
+    end
+
+    test "an unknown term id raises, so a typo can't ship silently" do
+      assert_raise ArgumentError, ~r/unknown glossary term "stop-los"/, fn ->
+        Glossary.split_marked("a [[stop-los]] here")
+      end
+    end
   end
 end
