@@ -46,6 +46,14 @@
   @apply bg-fuchsia-500/25 text-fuchsia-200 shadow-none ring-1 ring-fuchsia-400/40;
 }
 
+/* Glossary popup: the term being read stays highlighted in the list. */
+#glossary [data-term-id][aria-current] > button {
+  @apply bg-sky-50 dark:bg-sky-950/40;
+}
+#glossary [data-glossary-input]::-webkit-search-cancel-button {
+  display: none;
+}
+
 /* The watchlist filter clears with Esc; the browser's own ✕ would sit on top of the "/" hint. */
 [data-flash-input]::-webkit-search-cancel-button {
   display: none;

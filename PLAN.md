@@ -240,6 +240,9 @@ My own requests, LiveView only (React SPA unchanged). Decisions and reasons in `
 - **Private per-tab portfolios + signed save file** (download, import, browser autosave),
   user-chosen starting cash ($1,000–$2,000,000), with Undo instead of a confirm popup. Trade-off: resting orders only fire while the
   tab is open.
+- **Glossary popup** (added 2026-11-08): Space Space opens ~40 trading words in plain English
+  over a blurred page, Esc closes it, no state between opens. Same filter and labels as the
+  watchlist, except Backspace clears the whole filter. Browser-only.
 
 ### Cut order if time runs short (original; superseded by the agreed scope above)
 1. Dividends → seeded data with a minimal display, or dropped if the interviewee confirms they

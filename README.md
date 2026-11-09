@@ -56,12 +56,15 @@ and an existing **React SPA**, and both were measured against each other on iden
   exits. **Order history** tags how each order was placed: manual, take-profit, stop-loss or
   limit entry.
 - A **"How paper trading works"** panel.
+- A **glossary** of 38 trading words (long, short, stop-loss, R:R, OCO…) in plain English, each
+  with how Capstock uses it. **Space Space** opens it over a blurred page; **Esc** closes it.
 
 ### Keyboard first
 - **`/`** focuses the watchlist filter: fuzzy search on ticker and company name, with
   **flash.nvim-style labels**. Press a result's letter to chart and select it.
 - **Jump keys:** every number box shows a letter (b, s, q, e, x, t, n…), and the closed exit
   panels show a/d/f/g. **Esc** leaves a box.
+- **Space Space** opens the glossary. It has the same filter and labels; **Backspace** clears it.
 - **Enter never places an order:** order buttons always take a click.
 
 ### React SPA (separate repo)
@@ -112,7 +115,8 @@ flowchart LR
 | `StockFetcher.Worker`, `Mock.Streamer` | Finnhub polling; simulated prices |
 | `StockFetcherWeb.PricesLive` | The LiveView app at `/prices` |
 | `TradingController`, `StockController`, `StockChannel` | JSON API and channel for the React SPA |
-| `assets/js/app.js`, `flash.js` | LiveView hooks: chart, save file, flash labels, jump keys, local time |
+| `StockFetcherWeb.Glossary` | The glossary's terms, as plain data |
+| `assets/js/app.js`, `flash.js` | LiveView hooks: chart, save file, flash labels, jump keys, glossary, local time |
 
 ### HTTP endpoints
 | Route | Purpose |
@@ -176,7 +180,7 @@ mix phx.server                   # http://localhost:4000/prices?source=mock
 ```zsh
 mix format
 mix compile --warnings-as-errors
-mix test                         # 181 tests
+mix test                         # 186 tests
 ```
 
 ## Deploying (Fly.io)

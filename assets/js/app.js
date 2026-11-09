@@ -407,11 +407,181 @@ const MoveKeys = {
   },
 }
 
+// Glossary popup (2026-11-08). Space twice in quick succession opens it, Esc closes it. The
+// server renders the terms once inside phx-update="ignore", so this hook can show, hide and
+// reorder rows directly: LiveView never patches them back.
+//
+// No state on purpose: open() and close() both reset() to a blank filter and the intro, so
+// reopening never lands on the last term you read.
+//
+// Keys are handled in one capturing listener on window, which runs before every other key
+// handler on the page (the jump keys, "/", the watchlist filter). While the glossary is open
+// it claims every key, so nothing behind the blur reacts. While closed it only watches Space.
+// The filter is the watchlist's (rank and assignLabels from flash.js): a letter that would
+// continue the search is never a label, every other letter labels a match, best match first.
+// One difference: Backspace clears the whole filter rather than one character.
+const DOUBLE_SPACE_MS = 400
+
+// Where Space types a character, so it must keep working: text boxes. A number box ignores
+// Space anyway, so Space Space works from there too.
+const typesSpace = (el) =>
+  !!el && (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT" ||
+    (el.tagName === "INPUT" && ["text", "search", "email", "url", "tel", "password"].includes(el.type)))
+
+const Glossary = {
+  mounted() {
+    this.panel = this.el.querySelector("[data-glossary-panel]")
+    this.input = this.el.querySelector("[data-glossary-input]")
+    this.list = this.el.querySelector("[data-glossary-list]")
+    this.detail = this.el.querySelector("[data-glossary-detail]")
+    this.intro = this.el.querySelector("[data-glossary-intro]")
+    this.empty = this.el.querySelector("[data-glossary-empty]")
+    this.count = this.el.querySelector("[data-glossary-count]")
+    this.items = [...this.el.querySelectorAll("[data-term-id]")]
+    // flash.js speaks "rows" with a ticker and a name: here the term and its aliases.
+    this.rows = this.items.map((li) => ({ticker: li.dataset.term, name: li.dataset.aliases, li}))
+    this.lastSpace = 0
+    this.labels = new Map()
+    this.matches = []
+
+    this.onKey = (e) => this.key(e)
+    window.addEventListener("keydown", this.onKey, {capture: true})
+    this.input.addEventListener("input", () => this.filter())
+    this.el.addEventListener("glossary:open", () => this.open())
+    this.el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-glossary-backdrop]")) return this.close()
+      const goto = e.target.closest("[data-goto]")?.dataset.goto
+      const row = e.target.closest("[data-term-id]")?.dataset.termId
+      if (goto || row) this.show(goto || row)
+      // Keep typing in the filter after a click.
+      if (this.isOpen()) this.input.focus()
+    })
+  },
+  destroyed() {
+    window.removeEventListener("keydown", this.onKey, {capture: true})
+    document.documentElement.style.overflow = ""
+  },
+
+  isOpen() { return !this.panel.classList.contains("hidden") },
+
+  key(e) {
+    if (this.isOpen()) return this.keyWhileOpen(e)
+    if (e.key !== " " || e.ctrlKey || e.metaKey || e.altKey || typesSpace(e.target)) {
+      this.lastSpace = 0
+      return
+    }
+    // Space outside a text box would scroll the page, or press a focused button (an order
+    // button!). Claim it either way.
+    e.preventDefault()
+    if (e.repeat) return
+    const now = performance.now()
+    if (now - this.lastSpace < DOUBLE_SPACE_MS) {
+      e.stopImmediatePropagation()
+      this.lastSpace = 0
+      this.open()
+    } else {
+      this.lastSpace = now
+    }
+  },
+
+  keyWhileOpen(e) {
+    // Nothing behind the glossary sees a key while it's open.
+    e.stopImmediatePropagation()
+    const claim = () => e.preventDefault()
+    if (e.key === "Escape") { claim(); return this.close() }
+    if (e.key === "Backspace") { claim(); return this.clear() }
+    if (e.key === "Enter") { claim(); if (this.matches[0]) this.show(this.matches[0].li.dataset.termId); return }
+    // Tab would walk out into the page behind the blur.
+    if (e.key === "Tab") { claim(); this.input.focus(); return }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return
+
+    const label = [...this.labels].find(([, key]) => key === e.key)?.[0]
+    if (label) {
+      claim()
+      return this.show(this.rows.find((r) => r.ticker === label).li.dataset.termId)
+    }
+    // A character typed while focus is elsewhere in the dialog still goes into the filter.
+    if (e.target !== this.input) {
+      claim()
+      this.input.focus()
+      this.input.value += e.key
+      this.filter()
+    }
+  },
+
+  open() {
+    this.reset()
+    this.returnFocus = document.activeElement
+    this.panel.classList.remove("hidden")
+    document.documentElement.style.overflow = "hidden"
+    this.input.focus()
+  },
+
+  close() {
+    this.panel.classList.add("hidden")
+    document.documentElement.style.overflow = ""
+    this.reset()
+    const back = this.returnFocus
+    this.returnFocus = null
+    if (back && back !== document.body && document.contains(back)) back.focus()
+    else document.activeElement?.blur()
+  },
+
+  reset() {
+    this.input.value = ""
+    this.filter()
+    this.select(null)
+    this.list.scrollTop = 0
+    this.detail.scrollTop = 0
+  },
+
+  clear() {
+    this.input.value = ""
+    this.filter()
+  },
+
+  filter() {
+    const query = this.input.value.trim()
+    this.matches = query ? rank(query, this.rows) : this.rows
+    this.labels = assignLabels(query, this.matches, this.rows)
+    const shown = new Map(this.matches.map((row, i) => [row.li, i]))
+    for (const row of this.rows) {
+      const at = shown.get(row.li)
+      row.li.hidden = at === undefined
+      row.li.style.order = at ?? ""
+      const key = this.labels.get(row.ticker)
+      const label = row.li.querySelector(".flash-label")
+      label.textContent = key || ""
+      label.style.display = key ? "inline-flex" : ""
+    }
+    this.empty.hidden = this.matches.length > 0
+    this.count.textContent = query
+      ? `${this.matches.length} match${this.matches.length === 1 ? "" : "es"}`
+      : `${this.rows.length} terms`
+    this.list.scrollTop = 0
+  },
+
+  // Open a term: like a watchlist jump, the filter clears and the list comes back whole, with
+  // the term highlighted and scrolled into view.
+  show(id) {
+    this.clear()
+    this.select(id)
+    this.detail.scrollTop = 0
+    document.getElementById(`glossary-${id}`)?.scrollIntoView({block: "nearest"})
+  },
+
+  select(id) {
+    for (const li of this.items) li.toggleAttribute("aria-current", li.dataset.termId === id)
+    for (const article of this.el.querySelectorAll("[data-detail]")) article.hidden = article.dataset.detail !== id
+    this.intro.hidden = id !== null
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   // A function, so it runs on every (re)connect: a new LiveView process gets the latest
   // autosave and restores the portfolio in mount, before the first render.
   params: () => ({_csrf_token: csrfToken, save: storage.get(saveKey(pageSource()))}),
-  hooks: {LocalTime, TimeZone, Chart, SaveFile, Flash, MoveKeys}
+  hooks: {LocalTime, TimeZone, Chart, SaveFile, Flash, MoveKeys, Glossary}
 })
 
 liveSocket.connect()
