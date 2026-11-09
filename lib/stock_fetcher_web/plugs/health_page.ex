@@ -80,7 +80,7 @@ defmodule StockFetcherWeb.Plugs.HealthPage do
     a{color:var(--chart)}
     </style></head><body><main>
     <h1>Capstock health<span class="badge #{d.status}">#{d.status}</span></h1>
-    <p class="sub">Refreshes every 5 s · up #{duration(d.uptime_s)} · <a href="/health?format=json">JSON</a></p>
+    <p class="sub">Updated #{time_tag(System.system_time(:millisecond))} · refreshes every 5 s · up #{duration(d.uptime_s)} · <a href="/health?format=json">JSON</a></p>
     <div class="grid">
     #{vm_card(d)}
     #{card("Open tabs", fmt(d.open_tabs), "most since boot: #{peak(d.peaks, :max_open_tabs, "")}", spark(d.history, :open_tabs))}
@@ -89,8 +89,16 @@ defmodule StockFetcherWeb.Plugs.HealthPage do
     #{card("Database", if(d.db_mb, do: "#{d.db_mb} MB", else: "–"), "SQLite on the Fly volume", "")}
     #{card("Limits", "#{d.lv_connections_per_ip_per_min}/min", "new LiveView tabs per IP<br>Fly proxy: 200 soft / 250 hard connections", "")}
     </div>
-    <footer>Charts: last #{length(d.history)} samples, one every 5 s. "tight" below 64 MB available, "critical" below 32 MB: the 256 MB machine was OOM-killed on 2026-11-09.</footer>
-    </main></body></html>
+    <footer>Charts: last #{length(d.history)} samples#{chart_span(d.history)}, one every 5 s. "tight" below 64 MB available, "critical" below 32 MB: the 256 MB machine was OOM-killed on 2026-11-09.</footer>
+    </main>
+    <script>
+    for (const t of document.querySelectorAll("time[data-local]")) {
+      const at = new Date(t.dateTime)
+      t.textContent = at.toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short"})
+      t.title = at.toISOString()
+    }
+    </script>
+    </body></html>
     """
   end
 
@@ -113,7 +121,7 @@ defmodule StockFetcherWeb.Plugs.HealthPage do
 
   defp peak(peaks, key, unit) do
     case peaks[key] do
-      %{value: value, at: at} -> "#{value}#{unit} at #{clock(at)} UTC"
+      %{value: value, at: at} -> "#{value}#{unit} at #{time_tag(at)}"
       _ -> "–"
     end
   end
@@ -145,6 +153,18 @@ defmodule StockFetcherWeb.Plugs.HealthPage do
 
   defp duration(s) when s < 3600, do: "#{div(s, 60)} min"
   defp duration(s), do: "#{div(s, 3600)} h #{div(rem(s, 3600), 60)} min"
+
+  # A time the browser rewrites in the viewer's own zone (the script at the end of the page). The
+  # server can't know the zone, so it renders UTC: that's what shows with JavaScript off.
+  defp time_tag(ms) do
+    iso = ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
+    ~s(<time datetime="#{iso}" data-local>#{clock(ms)} UTC</time>)
+  end
+
+  defp chart_span([]), do: ""
+
+  defp chart_span(history),
+    do: " (#{time_tag(List.first(history).at)} to #{time_tag(List.last(history).at)})"
 
   defp clock(ms),
     do:

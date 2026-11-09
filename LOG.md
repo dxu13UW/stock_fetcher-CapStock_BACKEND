@@ -529,3 +529,9 @@ documented and reviewed. The reflection itself is on the portfolio card, in my w
   available at idle, status "ok"; `/prices`, mock, and the React API all 200.
 - **Plan:** drop back to 256 MB after about a week (~2026-11-15). Before that, cut memory first
   (load code on demand instead of all at boot), and check `/health` before and after.
+
+### Addendum: /health shows local time (2026-11-09)
+- Peak times, an "Updated" time and the charts' time span now show in the viewer's own time
+  zone. The server marks each time with its UTC instant (`<time datetime=…>`), and a 5-line
+  inline script rewrites it with `toLocaleTimeString`; with JavaScript off it still reads UTC.
+  The JSON keeps raw UTC milliseconds. 197 tests.
