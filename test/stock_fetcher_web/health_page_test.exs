@@ -25,7 +25,14 @@ defmodule StockFetcherWeb.HealthPageTest do
     start_supervised!({StockFetcher.Health, interval: 1})
     Process.sleep(100)
 
-    assert conn |> get("/health") |> html_response(200) =~ "<polyline"
+    html = conn |> get("/health") |> html_response(200)
+    assert html =~ "<polyline"
+
+    # Times carry their UTC instant for the browser to show in local time; UTC without JS.
+    assert html =~
+             ~r/<time datetime="\d{4}-\d\d-\d\dT[^"]+Z" data-local>\d\d:\d\d:\d\d UTC<\/time>/
+
+    assert html =~ "toLocaleTimeString"
   end
 
   test "the JSON API health check is unchanged", %{conn: conn} do
