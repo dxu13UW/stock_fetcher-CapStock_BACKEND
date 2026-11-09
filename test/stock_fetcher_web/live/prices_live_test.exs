@@ -61,7 +61,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
       {:ok, view, _html} = live(conn, ~p"/prices?source=mock")
 
       assert has_element?(view, "#cash", "$100,000.00")
-      assert render(view) =~ "No positions."
+      assert has_element?(view, "#positions-panel", "No positions.")
       assert render(view) =~ "No orders yet."
     end
 
@@ -140,6 +140,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
       view = mock_view_with_price(conn, "ZZA", 10.0)
       broadcast_price("ZZB", 20.0, "stocks:mock")
       select(view, "ZZB")
+      open_panel(view, "long_sl")
 
       view |> form("#order-form", %{quantity: "7"}) |> render_change()
 
@@ -162,6 +163,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
     # The "Long · stop-loss" exit panel is open by default.
     defp submit_limit(view, ticker, quantity, limit, stop) do
       select(view, ticker)
+      open_panel(view, "long_sl")
 
       view
       |> form("#exit-form-long_sl", %{
@@ -322,6 +324,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
       view = mock_view_with_price(conn, "ZZO", 99.0)
 
       select(view, "ZZO")
+      open_panel(view, "long_sl")
 
       view
       |> form("#exit-form-long_sl", %{
@@ -495,6 +498,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
       assert_push_event(view, "chart:data", %{ticker: "AAPL", interval: 60})
 
       view |> element("#price-QBTS") |> render_click()
+      open_panel(view, "long_sl")
 
       assert_push_event(view, "chart:data", %{ticker: "QBTS", candles: candles})
       assert length(candles) >= 120
@@ -538,8 +542,16 @@ defmodule StockFetcherWeb.PricesLiveTest do
       assert has_element?(view, "#price-ZZEXTRA", "7.00")
     end
 
-    test "exit panels: opening one closes the others", %{conn: conn} do
+    test "exit panels start closed; opening one closes the others", %{conn: conn} do
       {:ok, view, _} = live(conn, ~p"/prices?source=mock")
+
+      # All four headers show and no form is open, so the whole list fits in the sidebar.
+      for id <- ~w(long_tp long_sl short_tp short_sl) do
+        assert has_element?(view, "#panel-#{id} button[phx-click=toggle_panel]")
+        refute has_element?(view, "#exit-form-#{id}")
+      end
+
+      open_panel(view, "long_sl")
       assert has_element?(view, "#exit-form-long_sl")
 
       view |> element("#panel-short_tp button[phx-click=toggle_panel]") |> render_click()
@@ -551,6 +563,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
     test "Example prices fills a valid setup and the risk preview", %{conn: conn} do
       view = mock_view_with_price(conn, "ZZX", 100.0)
       select(view, "ZZX")
+      open_panel(view, "long_sl")
       view |> form("#exit-form-long_sl", %{quantity: "10"}) |> render_change()
 
       view |> element("#exit-form-long_sl button", "Example prices") |> render_click()
@@ -585,6 +598,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
     test "jump keys: fixed letters on number inputs, free letters on Move boxes, none on buttons",
          %{conn: conn} do
       view = mock_view_with_price(conn, "ZZJ", 100.0)
+      open_panel(view, "long_sl")
 
       for {selector, key} <- [
             {"#order-form input[name=quantity]", "b"},
@@ -640,6 +654,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
     test "clicking an open order charts it with dotted lines in its chip colours", %{conn: conn} do
       view = mock_view_with_price(conn, "ZZF", 100.0)
       select(view, "ZZF")
+      open_panel(view, "long_sl")
 
       view
       |> form("#exit-form-long_sl", %{quantity: "1", limit: "101", stop: "95", take_profit: "110"})
@@ -692,6 +707,7 @@ defmodule StockFetcherWeb.PricesLiveTest do
       view = mock_view_with_price(conn, "ZZW", 100.0)
       select(view, "ZZW")
       assert_push_event(view, "chart:lines", %{lines: []})
+      open_panel(view, "long_sl")
 
       view
       |> form("#exit-form-long_sl", %{quantity: "1", limit: "90", stop: "85", take_profit: "99"})
@@ -741,6 +757,52 @@ defmodule StockFetcherWeb.PricesLiveTest do
       end
 
       assert has_element?(view, "#glossary [data-detail=r-r] [data-goto=risk]", "Risk")
+    end
+
+    test "terms in the page's text are marked and carry their definitions", %{conn: conn} do
+      view = mock_view_with_price(conn, "ZZT", 100.0)
+
+      assert has_element?(
+               view,
+               "#positions-panel button.term[data-term-link=position]",
+               "positions"
+             )
+
+      submit_order(view, "ZZT", "1", "buy")
+
+      # Table headers, the short-selling note and the help panel.
+      assert has_element?(
+               view,
+               "#positions-panel th button.term[data-term-link=avg-cost]",
+               "Avg cost"
+             )
+
+      assert has_element?(view, "#positions-panel th button.term[data-term-link=p-l]", "P/L")
+
+      assert has_element?(
+               view,
+               "#short-form button.term[type=button][data-term-link=cover]",
+               "Cover"
+             )
+
+      assert has_element?(view, "#help-panel button.term[data-term-link=oco]", "OCO")
+
+      assert has_element?(
+               view,
+               ~s|button.term[data-term-link=stop-loss][data-term-name="Stop-loss"][data-term-short^="An exit"]|
+             )
+
+      # A tutorial and the risk preview, once a panel is open; the preview still reads as text.
+      open_panel(view, "long_sl")
+      assert has_element?(view, "#panel-long_sl dd button.term[data-term-link=gap]", "gaps")
+      view |> form("#exit-form-long_sl", %{quantity: "10"}) |> render_change()
+      view |> element("#exit-form-long_sl button", "Example prices") |> render_click()
+      assert has_element?(view, "#exit-form-long_sl button.term[data-term-link=r-r]", "R:R")
+      assert has_element?(view, "#exit-form-long_sl", "risk $25.00")
+
+      # Never inside a button (a click on Buy must only buy) or a label.
+      refute has_element?(view, "button button")
+      refute has_element?(view, "label button.term")
     end
   end
 
@@ -811,6 +873,11 @@ defmodule StockFetcherWeb.PricesLiveTest do
   # Picks a ticker the way a user does: clicking its watchlist row. Every form then trades it.
   defp select(view, ticker) do
     view |> element("#price-#{ticker}") |> render_click()
+  end
+
+  # Opens an exit-strategy panel by clicking its header. They all start closed (2026-11-08).
+  defp open_panel(view, id) do
+    view |> element("#panel-#{id} button[phx-click=toggle_panel]") |> render_click()
   end
 
   # "side" is the clicked button (the form's submitter), passed as an extra value.

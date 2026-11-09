@@ -58,6 +58,8 @@ and an existing **React SPA**, and both were measured against each other on iden
 - A **"How paper trading works"** panel.
 - A **glossary** of 38 trading words (long, short, stop-loss, R:R, OCO…) in plain English, each
   with how Capstock uses it. **Space Space** opens it over a blurred page; **Esc** closes it.
+  Those words are dotted-underlined in the app's explanations: hover for a one-line definition,
+  click to open the glossary there.
 
 ### Keyboard first
 - **`/`** focuses the watchlist filter: fuzzy search on ticker and company name, with
@@ -180,7 +182,7 @@ mix phx.server                   # http://localhost:4000/prices?source=mock
 ```zsh
 mix format
 mix compile --warnings-as-errors
-mix test                         # 186 tests
+mix test                         # 189 tests
 ```
 
 ## Deploying (Fly.io)

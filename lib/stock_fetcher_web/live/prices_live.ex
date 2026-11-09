@@ -90,7 +90,8 @@ defmodule StockFetcherWeb.PricesLive do
           "stop" => "",
           "take_profit" => ""
         },
-        open_panel: "long_sl",
+        # All four exit panels start closed, so the sidebar shows every choice at once (2026-11-08).
+        open_panel: nil,
         panels: @panels,
         portfolio: nil,
         orders: [],
@@ -618,7 +619,7 @@ defmodule StockFetcherWeb.PricesLive do
           Exit strategies
         </h2>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          A limit entry with its exits set in advance. Open one to learn it and place it.
+          <.rich text="A [[limit-entry|limit entry]] with its [[exit|exits]] set in advance. Open one to learn it and place it." />
         </p>
         <div id="exit-panels" class="mt-2 space-y-2">
           <.exit_panel
@@ -678,7 +679,7 @@ defmodule StockFetcherWeb.PricesLive do
         <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Source: {if @source == :mock, do: "mock stream (simulated)", else: "live market data"}
           <span :if={@source == :live and not @market_open} class="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-            Market closed: live orders wait for 9:30 ET. Mock prices trade any time.
+            <.rich text="[[market-hours|Market closed]]: live orders wait for 9:30 ET. Mock prices trade any time." />
           </span>
         </p>
 
@@ -726,7 +727,7 @@ defmodule StockFetcherWeb.PricesLive do
               </button>
             </div>
             <p class="text-xs text-zinc-500 dark:text-zinc-400">
-              {chart_caption(@source)} · times in <.time_zone id="tz-chart" />
+              <.rich text={chart_caption(@source)} /> · times in <.time_zone id="tz-chart" />
             </p>
             <%!-- The hook owns everything inside (phx-update="ignore"): LiveView sends data as
                  events, the chart library draws it. --%>
@@ -736,7 +737,7 @@ defmodule StockFetcherWeb.PricesLive do
           <section id="trade" class="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
             <h2 class="font-semibold">Trade</h2>
             <p class="text-xs text-zinc-500 dark:text-zinc-400">
-              Paper trading: market orders fill at the price shown.
+              <.rich text="[[paper-trading|Paper trading]]: [[market-order|market orders]] fill at the price shown." />
             </p>
 
             <.ticker_chip id="trade-ticker" selected={@selected} prices={@prices} />
@@ -767,8 +768,7 @@ defmodule StockFetcherWeb.PricesLive do
                 Cover {@selected}
               </button>
               <span class="w-full text-xs text-zinc-500 dark:text-zinc-400">
-                Short sells shares you don't own and profits if the price falls; Cover buys them back.
-                The short's full value is set aside from cash until you cover.
+                <.rich text="[[short|Short]] sells shares you don't own and profits if the price falls; [[cover|Cover]] buys them back. The short's full value is [[cash-secured-short|set aside]] from cash until you cover." />
               </span>
             </form>
           </section>
@@ -867,16 +867,16 @@ defmodule StockFetcherWeb.PricesLive do
               </h2>
               <p :if={@portfolio == nil} class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Connecting…</p>
               <p :if={@portfolio && @portfolio.positions == []} class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                No positions.
+                <.rich text="No [[position|positions]]." />
               </p>
               <table :if={@portfolio && @portfolio.positions != []} id="positions" class="mt-1 w-full text-left text-sm">
                 <thead class="border-b border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
                   <tr>
-                    <th class="py-1.5">Ticker</th>
-                    <th class="py-1.5 text-right">Qty</th>
-                    <th class="py-1.5 text-right">Avg cost</th>
+                    <th class="py-1.5"><.term id="ticker" /></th>
+                    <th class="py-1.5 text-right"><.term id="share" label="Qty" /></th>
+                    <th class="py-1.5 text-right"><.term id="avg-cost" /></th>
                     <th class="py-1.5 text-right">Price</th>
-                    <th class="py-1.5 text-right">P/L</th>
+                    <th class="py-1.5 text-right"><.term id="p-l" /></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1123,7 +1123,7 @@ defmodule StockFetcherWeb.PricesLive do
         <dl class="space-y-1.5 text-xs leading-relaxed">
           <div :for={{label, text} <- tutorial(@panel.id)}>
             <dt class="inline font-semibold">{label}:</dt>
-            <dd class="inline text-zinc-600 dark:text-zinc-300">{text}</dd>
+            <dd class="inline text-zinc-600 dark:text-zinc-300"><.rich text={text} /></dd>
           </div>
         </dl>
 
@@ -1155,7 +1155,7 @@ defmodule StockFetcherWeb.PricesLive do
             </button>
           </div>
           <p class="col-span-2 text-xs tabular-nums text-zinc-600 dark:text-zinc-300">
-            {risk_preview(@form, @panel.direction, @portfolio, @prices)}
+            <.rich text={risk_preview(@form, @panel.direction, @portfolio, @prices)} />
           </p>
           <button
             type="submit"
@@ -1197,22 +1197,15 @@ defmodule StockFetcherWeb.PricesLive do
       <div class="mt-2 space-y-2 text-zinc-700 dark:text-zinc-300">
         <p>
           <strong>Fake money, real prices.</strong>
-          You trade a simulated portfolio, so you can test a strategy and find out whether it works
-          before risking real money. Most day traders lose money; a record of practice trades shows
-          whether your results are skill or luck.
+          <.rich text="You trade a simulated portfolio ([[paper-trading|paper trading]]), so you can test a strategy and find out whether it works before risking real money. Most [[day-trading|day traders]] lose money; a record of practice trades shows whether your results are skill or luck." />
         </p>
         <p>
           <strong>Prices.</strong>
-          Live: 5 tickers from Finnhub and 45 from Alpaca's free IEX feed (real trades on one US
-          exchange, so within a cent or so of the full market). Live orders only fill 9:30–16:00 ET on
-          trading days. Mock: simulated prices that move around the clock, for practice any time.
+          <.rich text="Live: 5 [[ticker|tickers]] from Finnhub and 45 from Alpaca's free [[iex|IEX]] feed (real trades on one US exchange, so within a cent or so of the full market). Live orders only fill [[market-hours|9:30–16:00 ET]] on trading days. Mock: simulated prices that move around the clock, for practice any time." />
         </p>
         <p>
           <strong>Orders.</strong>
-          Buy/Sell fill now at the price shown. Short sells shares you don't own, betting the price
-          falls; Cover buys them back. A <em>limit entry</em> waits for a better price. A
-          <em>stop-loss</em> closes the position if the price moves against you; a <em>take-profit</em>
-          closes it at your target. When one exit fills, the other is cancelled (OCO).
+          <.rich text="Buy/Sell [[fill]] now at the price shown. [[short|Short]] sells shares you don't own, betting the price falls; [[cover|Cover]] buys them back. A [[limit-entry|limit entry]] waits for a better price. A [[stop-loss]] closes the [[position]] if the price moves against you; a [[take-profit]] closes it at your target. When one exit fills, the other is cancelled ([[oco|OCO]])." />
         </p>
         <p>
           <strong>Your portfolio is yours.</strong>
@@ -1239,6 +1232,57 @@ defmodule StockFetcherWeb.PricesLive do
     </aside>
     """
   end
+
+  # Glossary terms in the page's own text (2026-11-08). A term has a dotted underline in the
+  # normal text colour (colour already means buy/sell, P/L, take-profit and stop-loss here, and a
+  # coloured word reads as a link). Hovering or focusing it shows its one-line definition, and a
+  # click opens the glossary at that term (both in app.js). Only explanatory text is marked, once
+  # per block, and never inside a button or label: a click on "Buy" must only buy.
+  #
+  # Terms are plain <button type="button"> elements, so the keyboard reaches them and a click
+  # inside a form never submits it. The markup is built as a string rather than HEEx, so no
+  # formatter-added whitespace can sneak in between a term and the punctuation after it.
+  attr :id, :string, required: true
+  attr :label, :string, default: nil
+
+  defp term(assigns) do
+    ~H"{Phoenix.HTML.raw(term_iodata(@id, @label || Glossary.fetch!(@id).term))}"
+  end
+
+  # Text with glossary markers: "Set an [[entry]] that [[fill|fills]]." (Glossary.split_marked/1).
+  attr :text, :string, required: true
+
+  defp rich(assigns) do
+    ~H"{rich_html(@text)}"
+  end
+
+  defp rich_html(text) do
+    text
+    |> Glossary.split_marked()
+    |> Enum.map(fn
+      {:term, id, label} -> term_iodata(id, label)
+      part -> escape_html(part)
+    end)
+    |> Phoenix.HTML.raw()
+  end
+
+  defp term_iodata(id, label) do
+    t = Glossary.fetch!(id)
+
+    [
+      ~s(<button type="button" class="term" data-term-link="),
+      escape_html(t.id),
+      ~s(" data-term-name="),
+      escape_html(t.term),
+      ~s(" data-term-short="),
+      escape_html(t.short),
+      ~s(">),
+      escape_html(label),
+      "</button>"
+    ]
+  end
+
+  defp escape_html(text), do: text |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
   # Glossary popup (2026-11-08): trading words for people who don't trade. Space Space opens it
   # (or the header button), Esc closes it. It has no state on purpose: every open starts from
@@ -1538,34 +1582,38 @@ defmodule StockFetcherWeb.PricesLive do
 
   defp tutorial("long_tp") do
     [
-      {"Goal", "Buy, then sell automatically once the price reaches your target."},
+      {"Goal", "[[long|Buy]], then sell automatically once the price reaches your target."},
       {"How",
-       "Set an entry below the current price; it fills when the price dips below it. Set the " <>
-         "take-profit above the entry. When the price trades above it, the shares sell at the take-profit."},
+       "Set an [[entry]] below the current price; it [[fill|fills]] when the price dips below it. " <>
+         "Set the [[take-profit]] above the entry. When the price trades above it, the shares sell " <>
+         "at the take-profit."},
       {"Why",
-       "You pick the exit while you're calm, not in the moment. John takes half off at the first " <>
-         "opposing zone; sell part of the position and let the rest run."}
+       "You pick the [[exit]] while you're calm, not in the moment. John takes half off at the " <>
+         "first opposing zone; sell part of the [[position]] and let the rest run."}
     ]
   end
 
   defp tutorial("long_sl") do
     [
-      {"Goal", "Buy, and cap the loss if the price falls instead."},
+      {"Goal", "[[long|Buy]], and cap the loss if the price falls instead."},
       {"How",
-       "Set an entry below the current price and a stop below the entry. At the first price at " <>
-         "or below the stop, the shares sell at that price (lower if the price gaps down)."},
+       "Set an [[entry]] below the current price and a [[stop]] below the entry. At the first " <>
+         "price at or below the stop, the shares sell at that price (lower if the price " <>
+         "[[gap|gaps]] down)."},
       {"Why",
-       "Accept the loss before the order fills. Risk is (entry − stop) × shares; John keeps it " <>
-         "near 7% of the position. Without a stop, one bad trade can wipe out many good ones."}
+       "Accept the loss before the order [[fill|fills]]. [[risk|Risk]] is (entry − stop) × " <>
+         "shares; John keeps it near 7% of the [[position]]. Without a stop, one bad trade can " <>
+         "wipe out many good ones."}
     ]
   end
 
   defp tutorial("short_tp") do
     [
-      {"Goal", "Profit from a fall: short high, cover automatically at a lower target."},
+      {"Goal", "Profit from a fall: [[short]] high, [[cover]] automatically at a lower target."},
       {"How",
-       "Set an entry above the current price; the short opens when the price rises above it. Set " <>
-         "the take-profit below the entry. When the price trades below it, the short is covered."},
+       "Set an [[entry]] above the current price; the short opens when the price rises above " <>
+         "it. Set the [[take-profit]] below the entry. When the price trades below it, the short " <>
+         "is covered."},
       {"Why",
        "John's QBTS trade: short a parabolic run back into a supply zone, cover half at the " <>
          "next demand zone. The target is planned before the trade, not chased."}
@@ -1574,13 +1622,14 @@ defmodule StockFetcherWeb.PricesLive do
 
   defp tutorial("short_sl") do
     [
-      {"Goal", "Short, and cap the loss if the price rises instead."},
+      {"Goal", "[[short|Short]], and cap the loss if the price rises instead."},
       {"How",
-       "Set an entry above the current price and a stop above the entry, just past the swing " <>
-         "high. At the first price at or above the stop, the short is covered at that price."},
+       "Set an [[entry]] above the current price and a [[stop]] above the entry, just past the " <>
+         "swing high. At the first price at or above the stop, the short is [[cover|covered]] at " <>
+         "that price."},
       {"Why",
        "A stock can rise without limit, so an unprotected short can lose more than it was worth. " <>
-         "The stop turns an open-ended risk into a known one."}
+         "The stop turns an open-ended [[risk]] into a known one."}
     ]
   end
 
@@ -1596,7 +1645,10 @@ defmodule StockFetcherWeb.PricesLive do
       reward = per_share(parse_cents(form["take_profit"]), entry, sign) * qty
       value = portfolio && account_value(portfolio, prices)
 
-      ["Position #{format_cents(entry * qty)}" | risk_parts(risk, reward, value)]
+      [
+        "[[position-size|Position]] #{format_cents(entry * qty)}"
+        | risk_parts(risk, reward, value)
+      ]
       |> Enum.join(" · ")
     else
       "Enter a quantity and entry to see the risk."
@@ -1610,9 +1662,10 @@ defmodule StockFetcherWeb.PricesLive do
 
   defp risk_parts(risk, reward, value) do
     [
-      risk > 0 && "risk #{format_cents(risk)}" <> percent_of(risk, value),
-      reward > 0 && "target #{format_cents(reward)}",
-      (risk > 0 and reward > 0) && "R:R 1:#{:erlang.float_to_binary(reward / risk, decimals: 1)}"
+      risk > 0 && "[[risk]] #{format_cents(risk)}" <> percent_of(risk, value),
+      reward > 0 && "[[target]] #{format_cents(reward)}",
+      (risk > 0 and reward > 0) &&
+        "[[r-r|R:R]] 1:#{:erlang.float_to_binary(reward / risk, decimals: 1)}"
     ]
     |> Enum.filter(&is_binary/1)
   end
@@ -1644,9 +1697,9 @@ defmodule StockFetcherWeb.PricesLive do
   # --- Display helpers ---
 
   defp chart_caption(:live),
-    do: "5-minute candles (Alpaca SIP history, then live ticks)"
+    do: "5-minute [[candlestick|candles]] (Alpaca [[sip|SIP]] history, then live ticks)"
 
-  defp chart_caption(:mock), do: "1-minute candles from the mock stream"
+  defp chart_caption(:mock), do: "1-minute [[candlestick|candles]] from the mock stream"
 
   defp account_value(portfolio, prices),
     do: Trading.account_value_cents(portfolio, &current_cents(prices, &1))

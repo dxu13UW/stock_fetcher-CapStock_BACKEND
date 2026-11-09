@@ -447,7 +447,11 @@ const Glossary = {
     this.onKey = (e) => this.key(e)
     window.addEventListener("keydown", this.onKey, {capture: true})
     this.input.addEventListener("input", () => this.filter())
-    this.el.addEventListener("glossary:open", () => this.open())
+    // From the header button, or a marked term on the page ({term: id} opens it at that term).
+    this.el.addEventListener("glossary:open", (e) => {
+      this.open()
+      if (e.detail?.term) this.show(e.detail.term)
+    })
     this.el.addEventListener("click", (e) => {
       if (e.target.closest("[data-glossary-backdrop]")) return this.close()
       const goto = e.target.closest("[data-goto]")?.dataset.goto
@@ -576,6 +580,55 @@ const Glossary = {
     this.intro.hidden = id !== null
   },
 }
+
+// Glossary terms marked in the page's text (.term buttons rendered by PricesLive). A click opens
+// the glossary at that term; hovering or focusing one shows its one-line definition.
+// One shared tooltip, appended to <body> (outside the LiveView, so patches never touch it) and
+// positioned with `fixed`: a tooltip inside the term would be clipped by the scrolling sidebar
+// and panels.
+document.addEventListener("click", (e) => {
+  const term = e.target.closest?.("[data-term-link]")
+  if (!term) return
+  e.preventDefault()
+  hideTermTip()
+  document.getElementById("glossary")?.dispatchEvent(
+    new CustomEvent("glossary:open", {detail: {term: term.dataset.termLink}})
+  )
+})
+
+const termTip = document.createElement("div")
+termTip.className = "term-tip"
+termTip.setAttribute("role", "tooltip")
+termTip.hidden = true
+document.body.appendChild(termTip)
+
+function showTermTip(term) {
+  termTip.replaceChildren()
+  const name = document.createElement("strong")
+  name.textContent = term.dataset.termName
+  termTip.append(name, document.createTextNode(` ${term.dataset.termShort}`))
+  const hint = document.createElement("span")
+  hint.textContent = "Click for more"
+  termTip.append(hint)
+  termTip.hidden = false
+  // Above the word, left-aligned with it; below if there's no room above; kept on screen.
+  const r = term.getBoundingClientRect()
+  const tip = termTip.getBoundingClientRect()
+  const top = r.top - tip.height - 6 >= 0 ? r.top - tip.height - 6 : r.bottom + 6
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - tip.width - 8)
+  termTip.style.top = `${top}px`
+  termTip.style.left = `${left}px`
+}
+
+function hideTermTip() { termTip.hidden = true }
+
+const termFrom = (e) => e.target.closest?.("[data-term-link]")
+document.addEventListener("mouseover", (e) => { const t = termFrom(e); if (t) showTermTip(t) })
+document.addEventListener("mouseout", (e) => { if (termFrom(e)) hideTermTip() })
+document.addEventListener("focusin", (e) => { const t = termFrom(e); if (t) showTermTip(t); else hideTermTip() })
+document.addEventListener("focusout", (e) => { if (termFrom(e)) hideTermTip() })
+// The word moves away under a fixed tooltip when anything scrolls.
+document.addEventListener("scroll", hideTermTip, {capture: true, passive: true})
 
 const liveSocket = new LiveSocket("/live", Socket, {
   // A function, so it runs on every (re)connect: a new LiveView process gets the latest

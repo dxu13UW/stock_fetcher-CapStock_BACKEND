@@ -457,4 +457,29 @@ defmodule StockFetcherWeb.Glossary do
 
   @doc "One term by id, or nil."
   def get(id), do: Enum.find(@terms, &(&1.id == id))
+
+  @doc "One term by id; raises on an unknown id, so a typo in marked text fails loudly."
+  def fetch!(id), do: get(id) || raise(ArgumentError, "unknown glossary term #{inspect(id)}")
+
+  @doc """
+  Splits text with glossary markers into plain strings and `{:term, id, label}` tuples.
+
+  `[[stop-loss]]` marks a term whose label is its id as written; `[[fill|fills]]` gives the
+  label separately. Used for the page's explanatory text, so a term reads naturally
+  mid-sentence ("an entry", "fills") while still pointing at its glossary entry.
+
+      iex> StockFetcherWeb.Glossary.split_marked("Set an [[entry]] that [[fill|fills]].")
+      ["Set an ", {:term, "entry", "entry"}, " that ", {:term, "fill", "fills"}, "."]
+  """
+  def split_marked(text) do
+    ~r/\[\[([a-z0-9-]+)(?:\|([^\]]+))?\]\]/
+    |> Regex.split(text, include_captures: true, trim: true)
+    |> Enum.map(fn part ->
+      case Regex.run(~r/^\[\[([a-z0-9-]+)(?:\|([^\]]+))?\]\]$/, part) do
+        [_, id] -> {:term, fetch!(id).id, id}
+        [_, id, label] -> {:term, fetch!(id).id, label}
+        nil -> part
+      end
+    end)
+  end
 end
