@@ -144,7 +144,10 @@ predictions written down first (details in [`LOG.md`](LOG.md)).
 | Click → reply (median) | 46 ms | 52 ms |
 | Reply to a successful order | a small diff | ~1.8 KB (whole portfolio) |
 | Server memory per open tab | 110–145 KB | 27 KB |
-| JS bundle, gzipped | 44 KB (97 KB with the chart) | 121 KB |
+| JS bundle, gzipped | 142 KB | 122 KB |
+
+The bundle sizes were re-measured on 2026-11-09. LiveView's own client was 44 KB on Nov 7; most
+of today's 142 KB is the candlestick chart library, plus the glossary and keyboard features.
 
 **The takeaway:** LiveView is about as cheap as React on the network, and cheaper per order. Its
 real cost is **server memory**: every open tab is a process holding the page's state.
