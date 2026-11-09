@@ -425,3 +425,50 @@ origin checks. Missing: anything limiting LiveView, where every open tab is a se
   returns focus to the box you came from; reopening shows the intro again; Space on a focused
   button no longer presses it; works at phone width and in dark mode. 186 tests.
 
+
+---
+
+## 2026-11-08 — Final state (submission)
+
+**Everything is merged and deployed.**
+- **LiveView app + backend:** `liveview` merged into `main` (`b73c4ed`), release v31 on Fly:
+  https://capstock-backend.fly.dev/prices (`?source=mock` trades any time).
+- **React SPA:** PR #8 (`feat/trading-panel` → `main`) merged in `tinle-ri/CapStock_FrontEnd`
+  (`765fc36`): the benchmark Buy/Sell panel and local order times. Live at
+  https://tinle-ri.github.io/CapStock_FrontEnd/, on the same backend.
+- **Portfolio card** updated: links to both apps and both repos, and my reflection.
+- **Checks:** 186 tests, 0 failures; `mix format` and `--warnings-as-errors` clean. Every
+  feature was also checked in a real browser, and the last deploy was re-checked on production.
+
+**Against the plan (`PLAN.md`):**
+- **Shipped, both UIs:** the benchmark paper-trading panel (ticker, quantity, buy/sell, market
+  fills at the server's price, confirmation, updated cash and position, the three errors), on one
+  shared `Trading` module.
+- **Shipped, LiveView only:** limit entries with stop-loss and take-profit (OCO), shorts and
+  covers, moving exits, order history with how each order was placed, a risk preview (John's
+  pre-trade check), 50 tickers, a 5-minute candlestick chart with order lines, private per-tab
+  portfolios with a signed save file and autosave, an exit-strategy sidebar with tutorials,
+  keyboard-first controls (flash labels, jump keys), a glossary, and abuse/memory guards.
+- **User:** John tried it on Nov 7 and said it "meets all my needs"; he handed later decisions
+  to me, each grounded in his interview.
+- **Metrics:** measured Nov 7 with predictions written first (table above). Not measured:
+  throttled latency and browser CPU/memory.
+- **Not built:**
+  - **Simulated dividends:** in the original user story, but John never mentioned them in the
+    interview, so they stayed at the bottom of the cut list.
+  - **4-hour supply/demand zones:** only partly done. There's a 5-minute chart, but no 4-hour
+    timeframe and no zone marking.
+  - **Staging app:** not needed; the mock stream covered testing outside market hours.
+
+**Known limits, accepted on purpose:**
+- Resting orders only fire while their tab is open (the price of having no accounts).
+- A Move and a fill in the same tick: the fill wins at the old price.
+- One machine, SQLite, 256 MB. Fly's connection limits and the per-IP and per-tab limits bound
+  LiveView's per-tab memory. Network floods would need a CDN or WAF in front.
+- The four known issues in `CLAUDE.md` (Worker timeouts, the telemetry handler, PubSub start
+  order, the channel intercept) were left alone, as planned.
+
+**Where the reflection material is:** the interview and what it changed (Oct 30), the
+metrics and the gap between prediction and result (Nov 7), the production OOM (Nov 8), the
+double-handled key bug (Nov 8), and the Nov 7–8 switch to the agent writing code while I
+documented and reviewed. The reflection itself is on the portfolio card, in my words.
