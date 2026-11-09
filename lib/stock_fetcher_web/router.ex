@@ -31,9 +31,12 @@ defmodule StockFetcherWeb.Router do
       ]
   end
 
+  # Per-IP limits. Raised 2026-11-08 for a class demo: a classroom often shares one public IP
+  # (campus NAT), so 30 students count as one client. Fly's proxy cap (fly.toml, 250
+  # connections) still bounds the total.
   pipeline :hydration_protected do
     plug StockFetcherWeb.Plugs.HydrationLimiter,
-      limit: 20,
+      limit: 120,
       scale_ms: 60_000,
       key_prefix: "hydrate",
       error: "Hydration rate limit exceeded.",
@@ -42,17 +45,17 @@ defmodule StockFetcherWeb.Router do
 
   pipeline :interactive_protected do
     plug StockFetcherWeb.Plugs.HydrationLimiter,
-      limit: 120,
+      limit: 300,
       scale_ms: 60_000,
       key_prefix: "zoom",
       error: "Zoom rate limit exceeded.",
       message: "Too many interactive zoom requests. Please slow down."
   end
 
-  # Orders write to the DB; 60/min per IP is far above a human clicking Buy.
+  # Orders write to the DB; 120/min per IP leaves room for a classroom behind one IP.
   pipeline :trading_protected do
     plug StockFetcherWeb.Plugs.HydrationLimiter,
-      limit: 60,
+      limit: 120,
       scale_ms: 60_000,
       key_prefix: "trade",
       error: "Trading rate limit exceeded.",

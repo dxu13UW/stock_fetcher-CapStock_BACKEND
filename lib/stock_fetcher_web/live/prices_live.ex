@@ -154,7 +154,10 @@ defmodule StockFetcherWeb.PricesLive do
   #    Behind Fly the IP is the Fly-Client-IP header, which Fly's proxy sets; locally, the peer.
   #    Generous enough for one person's tabs and reconnects after a deploy.
   defp connection_allowed?(socket) do
-    limit = Application.get_env(:stock_fetcher, :lv_connections_per_minute, 30)
+    # 200 a minute per IP (was 30): a classroom behind one campus IP counts as one client, and
+    # every page load or Live/Mock switch is a new connection. Fly's proxy still caps the total
+    # at 250 open connections (fly.toml), which is what protects memory.
+    limit = Application.get_env(:stock_fetcher, :lv_connections_per_minute, 200)
 
     match?(
       {:allow, _},
